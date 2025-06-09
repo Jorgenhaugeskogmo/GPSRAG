@@ -86,4 +86,4 @@ Thumbs.db
 # Temporary files
 *.tmp
 *.temp
-.env.bak 
+.env.bak .env
