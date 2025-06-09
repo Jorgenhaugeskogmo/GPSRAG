@@ -35,7 +35,7 @@ export default function DocumentUpload() {
         formData.append('file', file);
 
         // Last opp til API Gateway
-        const response = await fetch('http://localhost:8000/documents/documents/upload', {
+        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/documents/documents/upload`, {
           method: 'POST',
           body: formData,
         });
