@@ -1,4 +1,21 @@
-# GPSRAG - RAG-drevet GPS Data Chatapplikasjon
+# GPSRAG - GPS Document Analysis System
+
+System for analyse av GPS-relaterte dokumenter ved hjelp av AI og RAG (Retrieval-Augmented Generation).
+
+## Deployment Status
+Sist oppdatert: Nå med riktige API URLs for Railway deployment
+
+## Services
+- Frontend: Next.js applikasjon
+- API Gateway: HovedAPI for all kommunikasjon  
+- RAG Engine: AI-basert dokumentanalyse
+- Document Service: Håndtering av dokumentopplasting
+- Vector Database: Weaviate for embeddings
+- PostgreSQL: Hoveddatabase
+- Redis: Cache og session storage
+
+## Live URL
+https://gpsrag-production.up.railway.app
 
 ## 🏗️ Arkitektur Oversikt
 
