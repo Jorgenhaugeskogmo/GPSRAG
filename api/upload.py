@@ -31,7 +31,7 @@ app.add_middleware(
 # Se: https://vercel.com/docs/functions/serverless-functions/runtimes/python
 handler = app 
 
-@app.post("/api/upload/")
+@app.post("/")
 async def upload_document(file: UploadFile = File(...)):
     try:
         logger.info(f"Mottok fil: {file.filename}")

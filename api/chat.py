@@ -83,7 +83,7 @@ except Exception as e:
 
 
 # --- API Endpoints ---
-@app.post("/api/chat/")
+@app.post("/")
 async def chat_handler(request: ChatRequest):
     if rag_chain is None:
         logger.error(f"Forsøkte å kjøre chat, men RAG chain er ikke initialisert. Feil: {init_error}")
@@ -117,7 +117,7 @@ async def chat_handler(request: ChatRequest):
         logger.error(f"❌ Feil under chat-behandling: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.get("/api/health")
+@app.get("/health")
 async def health():
     if init_error:
         return {"status": "unhealthy", "error": init_error}
@@ -125,4 +125,4 @@ async def health():
 
 @app.get("/")
 def root():
-    return {"message": "GPSRAG API er live. Gå til /docs for API-dokumentasjon."} 
+    return {"message": "GPSRAG API (Chat) er live."} 
