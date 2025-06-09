@@ -2,12 +2,16 @@
 Konfigurasjon for GPSRAG API Gateway
 """
 
+import os
 from pydantic import BaseSettings
 from typing import Optional
-import os
 
 class Settings(BaseSettings):
     """Applikasjonens innstillinger"""
+    
+    # Server
+    host: str = "0.0.0.0"
+    port: int = int(os.getenv("PORT", 8000))
     
     # App settings
     app_name: str = "GPSRAG API"
@@ -15,25 +19,23 @@ class Settings(BaseSettings):
     debug: bool = True
     secret_key: str = "your-secret-key-change-in-production"
     
-    # Database
-    database_url: str = "postgresql://postgres:postgres@postgres:5432/gpsrag"
+    # Database - Use SQLite for Railway deployment
+    database_url: str = os.getenv("DATABASE_URL", "sqlite:///./gpsrag.db")
     
     # Vector Database
     weaviate_url: str = "http://weaviate:8080"
     weaviate_api_key: Optional[str] = None
     
-    # Object Storage
-    minio_endpoint: str = "minio:9000"
-    minio_access_key: str = "minioadmin"
-    minio_secret_key: str = "minioadmin"
-    minio_bucket: str = "gpsrag-data"
-    minio_secure: bool = False
+    # Object Storage - Disabled for Railway
+    minio_url: str = os.getenv("MINIO_URL", "")
+    minio_access_key: str = os.getenv("MINIO_ACCESS_KEY", "")
+    minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "")
+    minio_bucket_name: str = "documents"
     
     # Redis Cache
     redis_url: str = "redis://redis:6379"
     
     # AI/ML
-    openai_api_key: Optional[str] = None
     huggingface_api_key: Optional[str] = None
     
     # Security
@@ -56,10 +58,17 @@ class Settings(BaseSettings):
     max_tokens: int = 4000
     temperature: float = 0.7
     
-    # Services
-    ingestion_service_url: str = "http://ingestion:8001"
-    rag_engine_url: str = "http://rag-engine:8002"
-    visualization_service_url: str = "http://visualization:8003"
+    # External Services - Disabled for Railway
+    rag_engine_url: str = os.getenv("RAG_ENGINE_URL", "http://localhost:8002")
+    visualization_url: str = os.getenv("VISUALIZATION_URL", "http://localhost:8003")
+    
+    # CORS Origins
+    cors_origins: list = [
+        "http://localhost:3000",
+        "http://localhost:3001", 
+        "http://localhost:3002",
+        "https://*.railway.app"
+    ]
     
     class Config:
         env_file = ".env"
