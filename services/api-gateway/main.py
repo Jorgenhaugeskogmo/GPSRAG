@@ -116,12 +116,13 @@ async def proxy_frontend(request: Request, path: str):
     
     # Proxy til Next.js server
     frontend_port = int(os.getenv("PORT", "8000")) + 1
-    frontend_url = f"http://localhost:{frontend_port}"
+    frontend_url = f"http://127.0.0.1:{frontend_port}"
     
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(timeout=5.0) as client:
             # Bygg proxy URL
             target_url = f"{frontend_url}/{path}" if path else frontend_url
+            logger.info(f"Proxying request to: {target_url}")
             
             # Kopier headers fra original request
             headers = dict(request.headers)
@@ -134,7 +135,6 @@ async def proxy_frontend(request: Request, path: str):
                 headers=headers,
                 params=request.query_params,
                 content=await request.body() if request.method in ["POST", "PUT", "PATCH"] else None,
-                timeout=30.0
             )
             
             # Return proxied response
@@ -144,13 +144,24 @@ async def proxy_frontend(request: Request, path: str):
                 headers=dict(response.headers),
                 media_type=response.headers.get("content-type")
             )
+    except httpx.ConnectError as e:
+        logger.error(f"Kunne ikke koble til frontend på {frontend_url}: {e}")
+        # Fallback response
+        return {
+            "message": "GPSRAG Fullstack App",
+            "version": "1.0.0", 
+            "status": "active",
+            "api_docs": "/docs",
+            "frontend_status": f"Frontend starter opp... (Port {frontend_port})",
+            "frontend_url": frontend_url
+        }
     except Exception as e:
         logger.error(f"Frontend proxy feil: {e}")
         # Fallback response
         return {
             "message": "GPSRAG Fullstack App",
             "version": "1.0.0",
-            "status": "active",
+            "status": "active", 
             "api_docs": "/docs",
             "frontend_error": f"Frontend ikke tilgjengelig: {str(e)}"
         }

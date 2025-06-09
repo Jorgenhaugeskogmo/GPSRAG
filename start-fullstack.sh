@@ -14,8 +14,20 @@ if [ -f "server.js" ]; then
     FRONTEND_PID=$!
     echo "Frontend PID: $FRONTEND_PID"
     
-    # Vent litt for frontend å starte
-    sleep 3
+    # Vent på at frontend starter
+    echo "Venter på at frontend starter..."
+    sleep 5
+    
+    # Sjekk om frontend er tilgjengelig
+    for i in {1..10}; do
+        if curl -s http://localhost:$FRONTEND_PORT > /dev/null 2>&1; then
+            echo "✅ Frontend er tilgjengelig på port $FRONTEND_PORT"
+            break
+        else
+            echo "Frontend ikke klar ennå, venter... ($i/10)"
+            sleep 2
+        fi
+    done
 fi
 
 # Start backend med fullstack konfiguration
