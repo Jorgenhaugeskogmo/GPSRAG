@@ -14,7 +14,6 @@ ENV NODE_ENV=production
 ENV NEXT_PUBLIC_API_URL="https://gpsrag-production.up.railway.app"
 ENV NEXT_PUBLIC_WS_URL="wss://gpsrag-production.up.railway.app"
 RUN npm run build
-RUN npm run export || echo "Export ikke tilgjengelig, bruker build"
 
 # Stage 2: Python Backend med Frontend
 FROM python:3.11-slim
@@ -43,9 +42,9 @@ RUN pip install aiofiles sqlalchemy[sqlite]
 # Kopier backend kode
 COPY services/api-gateway/ ./backend/
 
-# Kopier bygget frontend
-COPY --from=frontend-builder /app/frontend/out ./frontend/out
-COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
+# Kopier standalone frontend build
+COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/
+COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
 # Opprett Railway-spesifikk startup script

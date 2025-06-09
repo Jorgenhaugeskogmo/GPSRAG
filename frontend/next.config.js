@@ -2,9 +2,8 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-  output: 'export', // For static export
+  output: 'standalone',
   trailingSlash: true,
-  distDir: 'dist',
   env: {
     NEXT_PUBLIC_API_URL: process.env.NODE_ENV === 'production' 
       ? 'https://gpsrag-production.up.railway.app'

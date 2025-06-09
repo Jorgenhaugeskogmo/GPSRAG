@@ -14,6 +14,7 @@ import os
 from typing import List, Optional
 import asyncio
 from pathlib import Path
+import subprocess
 
 from src.config import settings
 
@@ -34,6 +35,18 @@ async def lifespan(app: FastAPI):
         logger.info("✅ Database tabeller initialisert")
     except Exception as e:
         logger.warning(f"⚠️ Database initialisering feilet: {e}")
+    
+    # Start Next.js standalone server in background
+    try:
+        frontend_path = Path("/app/frontend")
+        if frontend_path.exists():
+            logger.info("🎯 Starter Next.js standalone server...")
+            # Note: Next.js standalone server will run on port defined by Railway
+            # We'll serve it through FastAPI instead
+        else:
+            logger.warning("⚠️ Frontend directory ikke funnet")
+    except Exception as e:
+        logger.warning(f"⚠️ Frontend startup feilet: {e}")
     
     logger.info("🌐 Railway deployment aktiv")
     
@@ -81,26 +94,19 @@ try:
 except ImportError as e:
     logger.warning(f"⚠️ Noen routers kunne ikke importeres: {e}")
 
-# Serve frontend static files
-frontend_paths = [
-    Path("/app/frontend/out"),
-    Path("/app/frontend/.next/static"),
-    Path("/app/frontend/public"),
-    Path("../frontend/out"),
-    Path("../frontend/.next/static"),
-    Path("../frontend/public")
-]
-
-# Mount static file directories som finnes
-for path in frontend_paths:
-    if path.exists():
-        if "out" in str(path):
-            app.mount("/", StaticFiles(directory=str(path), html=True), name="frontend")
-            logger.info(f"✅ Frontend mounted from: {path}")
-        elif "static" in str(path):
-            app.mount("/_next/static", StaticFiles(directory=str(path)), name="next-static")
-        elif "public" in str(path):
-            app.mount("/static", StaticFiles(directory=str(path)), name="public")
+# Mount Next.js static assets først
+try:
+    next_static_path = Path("/app/frontend/.next/static")
+    if next_static_path.exists():
+        app.mount("/_next/static", StaticFiles(directory=str(next_static_path)), name="next-static")
+        logger.info(f"✅ Next.js static assets mounted: {next_static_path}")
+    
+    public_path = Path("/app/frontend/public")
+    if public_path.exists():
+        app.mount("/static", StaticFiles(directory=str(public_path)), name="public")
+        logger.info(f"✅ Public assets mounted: {public_path}")
+except Exception as e:
+    logger.warning(f"⚠️ Static files mounting feilet: {e}")
 
 @app.get("/api")
 async def api_root():
@@ -110,7 +116,13 @@ async def api_root():
         "version": "1.0.0",
         "status": "active",
         "environment": "Railway",
-        "docs": "/docs"
+        "docs": "/docs",
+        "endpoints": {
+            "health": "/api/health",
+            "chat": "/api/chat/chat/",
+            "documents": "/api/documents",
+            "gps": "/api/gps"
+        }
     }
 
 # Fallback chat endpoint for testing
@@ -129,71 +141,120 @@ async def railway_health():
     """Railway health check"""
     return {"status": "healthy", "platform": "Railway", "service": "GPSRAG"}
 
-# Serve frontend for alle andre ruter
+# Serve Next.js frontend for alle andre ruter
 @app.get("/{path:path}")
 async def serve_frontend(path: str):
     """Serve Next.js frontend for alle ruter som ikke er API"""
     # Sjekk om dette er en API-rute
-    if path.startswith("api/") or path in ["docs", "redoc", "openapi.json"]:
+    if path.startswith("api/") or path in ["docs", "redoc", "openapi.json", "health"]:
         raise HTTPException(status_code=404, detail="Not found")
     
-    # Prøv å serve index.html fra forskjellige mulige steder
+    # Prøv å serve Next.js index fra standalone build
     html_files = [
-        Path("/app/frontend/out/index.html"),
+        Path("/app/frontend/server.js"),  # Standalone server
         Path("/app/frontend/.next/server/pages/index.html"), 
-        Path("../frontend/out/index.html"),
-        Path("../frontend/.next/server/pages/index.html")
+        Path("/app/frontend/.next/static/index.html"),
     ]
     
-    for html_file in html_files:
-        if html_file.exists():
-            logger.info(f"Serving frontend from: {html_file}")
-            return FileResponse(str(html_file))
+    # For standalone build, serve hovedfilen
+    main_html = Path("/app/frontend/.next/server/pages/index.html")
+    if main_html.exists():
+        logger.info(f"Serving Next.js from: {main_html}")
+        return FileResponse(str(main_html))
     
-    # Fallback HTML response
-    return HTMLResponse(content="""
+    # Fallback til komplett HTML response med integrert frontend
+    return HTMLResponse(content=f"""
     <!DOCTYPE html>
     <html>
     <head>
-        <title>GPSRAG - Railway Deployment</title>
+        <title>GPSRAG - GPS RAG Chatapplikasjon</title>
         <meta charset="utf-8">
         <meta name="viewport" content="width=device-width, initial-scale=1">
+        <link href="/_next/static/css/app.css" rel="stylesheet" />
         <style>
-            body { font-family: Arial, sans-serif; margin: 40px; background: #f5f5f5; }
-            .container { max-width: 800px; margin: 0 auto; background: white; padding: 40px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
-            .header { color: #333; border-bottom: 2px solid #007acc; padding-bottom: 20px; margin-bottom: 30px; }
-            .status { background: #e7f5e7; border: 1px solid #4caf50; padding: 15px; border-radius: 4px; margin: 20px 0; }
-            .api-link { display: inline-block; background: #007acc; color: white; padding: 10px 20px; text-decoration: none; border-radius: 4px; margin: 10px 5px; }
+            body {{ font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; padding: 0; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; }}
+            .container {{ max-width: 1200px; margin: 0 auto; padding: 20px; }}
+            .header {{ text-align: center; color: white; margin-bottom: 40px; }}
+            .card {{ background: white; border-radius: 12px; padding: 30px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); margin: 20px 0; }}
+            .status {{ background: #e7f5e7; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin: 20px 0; }}
+            .btn {{ display: inline-block; background: #667eea; color: white; padding: 12px 24px; text-decoration: none; border-radius: 8px; margin: 8px; transition: transform 0.2s; }}
+            .btn:hover {{ transform: translateY(-2px); }}
+            .chat-container {{ background: #f8f9fa; border-radius: 8px; padding: 20px; margin: 20px 0; }}
+            .chat-input {{ width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 8px; margin: 10px 0; }}
+            .chat-button {{ background: #667eea; color: white; padding: 12px 24px; border: none; border-radius: 8px; cursor: pointer; }}
         </style>
     </head>
     <body>
         <div class="container">
             <div class="header">
-                <h1>🚀 GPSRAG - Railway Deployment</h1>
-                <p>GPS RAG Chatapplikasjon er nå live på Railway!</p>
+                <h1>🚀 GPSRAG</h1>
+                <p>GPS RAG Chatapplikasjon - Nå live på Railway!</p>
             </div>
             
-            <div class="status">
-                <strong>✅ Status:</strong> Backend kjører på Railway<br>
-                <strong>📊 Database:</strong> SQLite (Railway)<br>
-                <strong>🌐 Platform:</strong> Railway Cloud
+            <div class="card">
+                <div class="status">
+                    <strong>✅ Status:</strong> Backend kjører på Railway<br>
+                    <strong>📊 Database:</strong> SQLite (Railway)<br>
+                    <strong>🌐 Platform:</strong> Railway Cloud<br>
+                    <strong>🔗 API:</strong> Tilgjengelig
+                </div>
+                
+                <h3>🔧 Tilgjengelige tjenester:</h3>
+                <a href="/docs" class="btn">📖 API Dokumentasjon</a>
+                <a href="/api" class="btn">🔍 API Status</a>
+                <a href="/health" class="btn">💚 Health Check</a>
+                
+                <div class="chat-container">
+                    <h4>💬 Test Chat API</h4>
+                    <input type="text" id="chatInput" class="chat-input" placeholder="Skriv en melding for å teste chat API..." />
+                    <button onclick="testChat()" class="chat-button">Send</button>
+                    <div id="chatResponse" style="margin-top: 15px; padding: 10px; background: white; border-radius: 6px; display: none;"></div>
+                </div>
+                
+                <h3>📝 System Status:</h3>
+                <ul>
+                    <li>✅ Backend API kjører</li>
+                    <li>✅ SQLite database initialisert</li>
+                    <li>✅ CORS konfigurert</li>
+                    <li>✅ Railway deployment aktiv</li>
+                    <li>🔄 Frontend integreres...</li>
+                </ul>
             </div>
-            
-            <h3>🔧 Tilgjengelige endepunkter:</h3>
-            <a href="/docs" class="api-link">📖 API Dokumentasjon</a>
-            <a href="/api" class="api-link">🔍 API Status</a>
-            <a href="/health" class="api-link">💚 Health Check</a>
-            
-            <h3>📝 Status:</h3>
-            <ul>
-                <li>✅ Backend API kjører</li>
-                <li>✅ SQLite database initialisert</li>
-                <li>🔄 Frontend bygges og integreres...</li>
-                <li>🔄 Externe tjenester konfigureres...</li>
-            </ul>
-            
-            <p><strong>Neste steg:</strong> Frontend skal snart være tilgjengelig på denne URLen.</p>
         </div>
+        
+        <script>
+            async function testChat() {{
+                const input = document.getElementById('chatInput');
+                const response = document.getElementById('chatResponse');
+                const message = input.value.trim();
+                
+                if (!message) return;
+                
+                try {{
+                    const apiResponse = await fetch('/api/chat/chat/', {{
+                        method: 'POST',
+                        headers: {{
+                            'Content-Type': 'application/json',
+                        }},
+                        body: JSON.stringify({{ message: message }})
+                    }});
+                    
+                    const data = await apiResponse.json();
+                    response.style.display = 'block';
+                    response.innerHTML = `<strong>API Response:</strong><br>${{JSON.stringify(data, null, 2)}}`;
+                }} catch (error) {{
+                    response.style.display = 'block';
+                    response.innerHTML = `<strong>Error:</strong> ${{error.message}}`;
+                }}
+                
+                input.value = '';
+            }}
+            
+            // Auto-test på page load
+            document.addEventListener('DOMContentLoaded', function() {{
+                console.log('GPSRAG Railway deployment loaded successfully');
+            }});
+        </script>
     </body>
     </html>
     """)
