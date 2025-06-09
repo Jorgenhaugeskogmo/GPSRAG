@@ -118,7 +118,7 @@ services:
     environment:
       - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/gpsrag
       - WEAVIATE_URL=http://weaviate:8080
-      - OPENAI_API_KEY=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
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-your_openai_api_key_here}
     depends_on:
       - postgres
       - weaviate
