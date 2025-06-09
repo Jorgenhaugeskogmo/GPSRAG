@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Layout } from '../components/Layout';
-import ChatInterface from '../components/chat/ChatInterface';
-import DocumentUpload from '../components/upload/DocumentUpload';
+import ChatInterface from '../src/components/ChatInterface';
+import DocumentUpload from '../src/components/DocumentUpload';
 import { DocumentTextIcon } from '@heroicons/react/24/outline';
 
 export default function Home() {

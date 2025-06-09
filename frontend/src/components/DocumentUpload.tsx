@@ -30,41 +30,49 @@ export default function DocumentUpload() {
       setUploadedFiles(prev => [...prev, newFile]);
 
       try {
-        // Opprett FormData for filopplasting
-        const formData = new FormData();
-        formData.append('file', file);
-
-        // Last opp til API Gateway
-        const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/documents/documents/upload`, {
-          method: 'POST',
-          body: formData,
-        });
-
-        if (response.ok) {
-          const result = await response.json();
-          
-          // Oppdater status til processing
-          setUploadedFiles(prev => 
+        // Oppdater UI for å vise at opplasting har startet
+        setUploadedFiles(prev => 
             prev.map(f => 
               f.id === fileId 
-                ? { ...f, status: 'processing', progress: 50 }
+                ? { ...f, status: 'uploading', progress: 25 }
                 : f
             )
           );
 
-          // Simuler prosessering (i ekte app ville dette komme fra WebSocket)
-          setTimeout(() => {
-            setUploadedFiles(prev => 
-              prev.map(f => 
-                f.id === fileId 
-                  ? { ...f, status: 'completed', progress: 100 }
-                  : f
-              )
-            );
-          }, 3000);
+        const formData = new FormData();
+        formData.append('file', file);
 
+        // Last opp til vårt nye serverless endepunkt
+        const response = await fetch('/api/upload', {
+          method: 'POST',
+          body: formData,
+        });
+        
+        // Oppdater UI til prosesserings-steg
+        setUploadedFiles(prev => 
+            prev.map(f => 
+              f.id === fileId 
+                ? { ...f, status: 'processing', progress: 75 }
+                : f
+            )
+          );
+
+        if (response.ok) {
+          const result = await response.json();
+          console.log('Upload result:', result);
+          
+          // Sett status til ferdig
+          setUploadedFiles(prev => 
+            prev.map(f => 
+              f.id === fileId 
+                ? { ...f, status: 'completed', progress: 100 }
+                : f
+            )
+          );
         } else {
-          throw new Error('Upload failed');
+          const errorResult = await response.json();
+          console.error('Upload failed on server:', errorResult.error);
+          throw new Error(errorResult.error || 'Upload failed');
         }
       } catch (error) {
         console.error('Upload error:', error);

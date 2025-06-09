@@ -2,28 +2,16 @@
 const nextConfig = {
   reactStrictMode: true,
   swcMinify: true,
-  output: 'standalone',
   trailingSlash: true,
-  env: {
-    NEXT_PUBLIC_API_URL: process.env.NODE_ENV === 'production' 
-      ? 'https://gpsrag-production.up.railway.app'
-      : process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000',
-    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL || '/ws',
-  },
   async rewrites() {
-    // API proxy for fullstack deployment
     return [
       {
         source: '/api/:path*',
-        destination: '/api/:path*', // Served by FastAPI backend
-      },
-      {
-        source: '/docs',
-        destination: '/docs', // FastAPI docs
-      },
-      {
-        source: '/redoc',
-        destination: '/redoc', // FastAPI redoc
+        // I Vercel-miljøet vil dette automatisk rutes til /api-mappen
+        // Lokalt vil det proxy'es til backend-serveren
+        destination: process.env.NODE_ENV === 'production'
+          ? '/api/:path*'
+          : 'http://localhost:8000/api/:path*',
       },
     ];
   },

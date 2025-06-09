@@ -59,8 +59,10 @@ export default function ChatInterface() {
     setIsLoading(true);
 
     try {
-      // Send til RAG API
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/chat/chat/`, {
+      const startTime = Date.now();
+      setIsLoading(true);
+
+      const response = await fetch(`/api/chat/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
