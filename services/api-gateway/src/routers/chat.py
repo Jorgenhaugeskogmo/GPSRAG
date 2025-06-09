@@ -303,8 +303,13 @@ async def send_message(
         db.add(user_message)
         db.commit()
         
-        # Send til RAG-motoren
+        # Send til RAG-motoren (med forbedret error handling for Railway)
+        ai_response = None
+        sources = []
+        metadata = {"fallback": True, "platform": "Railway"}
+        
         try:
+            # Først prøv lokal RAG-engine (for Docker Compose)
             async with httpx.AsyncClient() as client:
                 rag_response = await client.post(
                     f"http://rag-engine:8002/query",
@@ -313,28 +318,27 @@ async def send_message(
                         "session_id": session_id,
                         "include_sources": True
                     },
-                    timeout=30.0
+                    timeout=5.0  # Kort timeout for Railway
                 )
                 
                 if rag_response.status_code == 200:
                     rag_data = rag_response.json()
-                    logger.info(f"RAG Response: {rag_data}")  # Debug logging
-                    ai_response = rag_data.get("answer", "Beklager, jeg kunne ikke prosessere forespørselen din.")
+                    logger.info(f"RAG Response: {rag_data}")
+                    ai_response = rag_data.get("answer", "")
                     sources = rag_data.get("sources", [])
-                    logger.info(f"Sources: {sources}")  # Debug logging
                     metadata = rag_data.get("metadata", {})
+                    logger.info(f"Sources: {sources}")
                 else:
-                    # Fallback ved feil i RAG-motoren
-                    ai_response = generate_fallback_response(request.message)
-                    sources = []
-                    metadata = {"fallback": True, "rag_error": rag_response.status_code}
+                    ai_response = None
                     
         except Exception as e:
-            print(f"RAG engine error: {e}")
-            # Fallback ved nettverksfeil
+            logger.info(f"RAG engine ikke tilgjengelig (forventet på Railway): {e}")
+            ai_response = None
+        
+        # Hvis RAG-engine ikke svarte, bruk fallback
+        if not ai_response:
             ai_response = generate_fallback_response(request.message)
-            sources = []
-            metadata = {"fallback": True, "error": str(e)}
+            metadata.update({"fallback_reason": "RAG engine ikke tilgjengelig på Railway"})
         
         # Lagre AI-respons
         ai_message = ChatMessage(
@@ -384,44 +388,142 @@ async def send_message(
         )
         
     except Exception as e:
-        print(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail="Kunne ikke prosessere chat-meldingen")
+        logger.error(f"Chat error: {e}")
+        # Returner fallback i stedet for å krasje
+        fallback_response = generate_fallback_response(request.message if hasattr(request, 'message') else "Hei")
+        return ChatResponse(
+            response=fallback_response,
+            session_id=request.session_id or str(uuid.uuid4()),
+            sources=[],
+            metadata={"fallback": True, "error": str(e), "platform": "Railway"}
+        )
 
 def generate_fallback_response(message: str) -> str:
     """Generer en fallback-respons når RAG-motoren ikke er tilgjengelig"""
     
+    # På Railway: Bruk OpenAI direkte for å gi smarte svar
+    try:
+        import openai
+        import os
+        
+        # Sett OpenAI API key
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        if openai_api_key and openai_api_key != "your_openai_api_key_here":
+            
+            from openai import OpenAI
+            client = OpenAI(api_key=openai_api_key)
+            
+            # Lag en smart respons basert på GPS/GNSS kontekst
+            system_prompt = """Du er en ekspert på GPS/GNSS teknologi og u-blox moduler. 
+            Du hjelper brukere med tekniske spørsmål om posisjonering, NMEA-protokoller, 
+            u-blox konfigurasjon og GPS-relaterte emner. Svar på norsk med teknisk presisjon."""
+            
+            response = client.chat.completions.create(
+                model="gpt-3.5-turbo",
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": message}
+                ],
+                max_tokens=500,
+                temperature=0.7
+            )
+            
+            return response.choices[0].message.content.strip()
+            
+    except Exception as e:
+        logger.info(f"OpenAI fallback feilet: {e}")
+    
+    # Hvis OpenAI feiler, bruk statiske svar
     message_lower = message.lower()
     
     # GPS/GNSS relaterte spørsmål
     if any(word in message_lower for word in ['gps', 'gnss', 'satelitt', 'posisjon']):
         return """GPS (Global Positioning System) er et satellittnavigasjonssystem som gir posisjonsinformasjon. 
-        
-For nøyaktig informasjon om u-blox moduler og konfigurering, vennligst last opp den relevante brukermanualen først, 
-så kan jeg gi deg spesifikke svar basert på dokumentasjonen."""
+
+🛰️ **GPS Grunnleggende:**
+- GPS bruker minst 4 satellitter for å beregne posisjon
+- Nøyaktighet: 1-5 meter under normale forhold
+- GNSS inkluderer GPS, GLONASS, Galileo og BeiDou
+
+🔧 **For u-blox moduler:**
+- Konfigurer via UBX-protokoll eller u-center software
+- NMEA 0183 for standard output
+- Støtter RTK for cm-nøyaktighet
+
+Har du spesifikke spørsmål om konfigurasjon eller implementering?"""
     
     # u-blox relaterte spørsmål
     elif any(word in message_lower for word in ['u-blox', 'ublox', 'modul', 'chip']):
-        return """u-blox lager høyytelse GNSS-moduler for posisjonering og tidsynkronisering.
-        
-For å få detaljert informasjon om spesifikke u-blox moduler, vennligst last opp brukermanualen for den aktuelle modulen 
-i dokumentopplasting-fanen. Da kan jeg svare på spesifikke tekniske spørsmål."""
+        return """u-blox lager høyytelse GNSS-moduler for presise posisjonsapplikasjoner.
+
+📡 **Populære u-blox moduler:**
+- **ZED-F9P**: Multi-band RTK, cm-nøyaktighet
+- **NEO-M8**: Standard precision, 2.5m CEP
+- **MAX-M10S**: Lavt strømforbruk, 1.5m CEP
+
+⚙️ **Konfigurering:**
+- Bruk u-center software for setup
+- UBX-CFG meldinger for programmatisk konfigurasjon
+- UART/I2C/SPI kommunikasjon
+
+Hvilket u-blox modul jobber du med? Kan hjelpe med spesifikk konfigurasjon!"""
     
     # NMEA relaterte spørsmål
     elif any(word in message_lower for word in ['nmea', 'melding', 'protokoll']):
-        return """NMEA 0183 er en standard kommunikasjonsprotokoll for marine elektroniske enheter, inkludert GPS-mottakere.
-        
-For spesifikke NMEA-meldinger som støttes av u-blox moduler, last opp den relevante dokumentasjonen så kan jeg gi deg 
-detaljerte svar om protokollimplementering."""
+        return """NMEA 0183 er standard protokoll for GPS-kommunikasjon.
+
+📋 **Vanlige NMEA-meldinger:**
+- **GGA**: Posisjon, høyde, satellitter i bruk
+- **RMC**: Anbefalt minimum data (tid, pos, hastighet)
+- **GSA**: Satelitt-status og DOP-verdier
+- **GSV**: Satellitter i sikt med SNR
+
+🔧 **u-blox NMEA konfigurasjon:**
+- CFG-MSG for å aktivere/deaktivere meldinger
+- Standard baudrate: 9600 (kan endres til 115200)
+- Format: $GPGGA,... med checksum
+
+Trenger du hjelp med parsing eller spesifikke NMEA-meldinger?"""
+    
+    # RTK relaterte spørsmål  
+    elif any(word in message_lower for word in ['rtk', 'nøyaktighet', 'presisjon']):
+        return """RTK (Real-Time Kinematic) gir centimeter-nøyaktighet!
+
+📍 **RTK Grunnleggende:**
+- Krever base station med kjent posisjon
+- Korreksjonsdata via radio/internet (NTRIP)
+- u-blox ZED-F9P støtter multi-band RTK
+
+⚡ **Setup RTK:**
+1. Konfigurer base station (Survey-in mode)
+2. Send RTCM korreksjonsdata til rover
+3. Oppnå Fixed solution for cm-nøyaktighet
+
+🌐 **NTRIP caster:**
+- Kartverket tilbyr CPOS tjeneste i Norge
+- Standard port 2101, brukernavn/passord påkrevd
+
+Jobber du med RTK base station eller rover setup?"""
     
     # Fallback for andre spørsmål
     else:
-        return """Hei! Jeg er en AI-assistent som spesialiserer seg på GPS/GNSS-teknologi og u-blox moduler.
-        
-For å kunne gi deg presise svar, vennligst:
-1. Last opp relevante brukermanualer eller dokumenter i 'Dokumentopplasting'-fanen
-2. Still så spesifikke spørsmål om GPS, GNSS, u-blox moduler, eller innholdet i dokumentene du har lastet opp
+        return """🛰️ **Hei! Jeg er din GPS/GNSS assistent**
 
-Jeg kan hjelpe med tekniske spørsmål om posisjonering, konfigurasjon, NMEA-protokoller og mer!"""
+Jeg kan hjelpe deg med:
+
+🔧 **Tekniske emner:**
+- u-blox modul konfigurasjon
+- NMEA protokoll og meldinger  
+- RTK setup for høy nøyaktighet
+- GPS/GNSS teori og implementering
+
+📡 **Spesialiteter:**
+- ZED-F9P RTK konfigurasjon
+- UBX protokoll kommandoer
+- NTRIP og korreksjonsdata
+- Antenna design og plassering
+
+Hva kan jeg hjelpe deg med i dag? Still gjerne spesifikke spørsmål om GPS/GNSS teknologi! 🚀"""
 
 @router.get("/sessions")
 async def list_chat_sessions(db: Session = Depends(get_db)):
