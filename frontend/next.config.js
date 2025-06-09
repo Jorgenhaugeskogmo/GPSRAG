@@ -4,8 +4,8 @@ const nextConfig = {
   swcMinify: true,
   output: 'standalone', // For Docker production builds
   env: {
-    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || process.env.REACT_APP_API_URL || 'http://localhost:8000',
-    NEXT_PUBLIC_WS_URL: process.env.REACT_APP_WS_URL || 'ws://localhost:8000',
+    NEXT_PUBLIC_API_URL: process.env.NEXT_PUBLIC_API_URL || '/api',
+    NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL || '/ws',
   },
   async rewrites() {
     // Only use rewrites in development
@@ -13,7 +13,7 @@ const nextConfig = {
       return [
         {
           source: '/api/:path*',
-          destination: 'http://localhost:8000/:path*',
+          destination: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/:path*',
         },
       ];
     }
