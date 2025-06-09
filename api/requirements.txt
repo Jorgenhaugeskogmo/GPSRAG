@@ -8,5 +8,6 @@ weaviate-client==3.26.2
 langchain==0.1.20
 langchain-community==0.0.38
 langchain-weaviate==0.1.2
+langchain-openai==0.1.7
 pypdf==4.2.0
 tiktoken==0.7.0 
