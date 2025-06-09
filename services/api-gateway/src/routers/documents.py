@@ -10,8 +10,7 @@ import uuid
 import os
 import logging
 
-from ..database import get_db
-from ..models.documents import Document
+from ..database import get_db, Document
 from ..config import settings
 
 logger = logging.getLogger(__name__)
