@@ -10,7 +10,7 @@ echo "🚀 Starter GPSRAG Fullstack på port $PORT"
 cd /app/frontend
 if [ -f "server.js" ]; then
     echo "📱 Starter Next.js frontend på port $FRONTEND_PORT"
-    PORT=$FRONTEND_PORT node server.js &
+    PORT=$FRONTEND_PORT HOSTNAME=0.0.0.0 node server.js &
     FRONTEND_PID=$!
     echo "Frontend PID: $FRONTEND_PID"
     
@@ -20,7 +20,7 @@ if [ -f "server.js" ]; then
     
     # Sjekk om frontend er tilgjengelig
     for i in {1..10}; do
-        if curl -s http://localhost:$FRONTEND_PORT > /dev/null 2>&1; then
+        if curl -s http://127.0.0.1:$FRONTEND_PORT > /dev/null 2>&1; then
             echo "✅ Frontend er tilgjengelig på port $FRONTEND_PORT"
             break
         else
