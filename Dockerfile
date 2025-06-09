@@ -41,13 +41,10 @@ RUN pip install aiofiles
 # Kopier backend kode
 COPY services/api-gateway/ ./backend/
 
-# Kopier bygget frontend
-COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/
-COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
+# Kopier bygget frontend (statisk export)
+COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
-
-# Kopier built HTML og assets (hvis de eksisterer)
-RUN mkdir -p ./frontend/out
 
 # Opprett startup script
 COPY start-fullstack.sh ./start-fullstack.sh

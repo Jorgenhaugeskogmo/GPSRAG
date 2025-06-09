@@ -3,9 +3,9 @@ GPSRAG API Gateway
 Hovedapplikasjon som håndterer alle API-kall og koordinerer mellom tjenester
 """
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, WebSocket, Request
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, WebSocket
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -14,7 +14,6 @@ import os
 from typing import List, Optional
 import asyncio
 from pathlib import Path
-import httpx
 
 from src.config import settings
 from src.database import engine, get_db, Base
@@ -106,65 +105,36 @@ async def api_root():
         "docs": "/docs"
     }
 
-# Proxy frontend requests to Next.js server
-@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
-async def proxy_frontend(request: Request, path: str):
-    """Proxy alle ikke-API ruter til Next.js frontend serveren"""
-    # Sjekk om dette er en API-rute som ikke skal proxies
-    if path.startswith("api/") or path in ["docs", "redoc"]:
+# Serve Next.js app as static files
+@app.get("/{path:path}")
+async def serve_frontend(path: str):
+    """Serve Next.js frontend for alle ruter som ikke er API"""
+    # Sjekk om dette er en API-rute som ikke skal håndteres her
+    if path.startswith("api/") or path in ["docs", "redoc", "openapi.json"]:
         raise HTTPException(status_code=404, detail="Not found")
     
-    # Proxy til Next.js server
-    frontend_port = int(os.getenv("PORT", "8000")) + 1
-    frontend_url = f"http://127.0.0.1:{frontend_port}"
+    # Prøv å serve Next.js index.html for SPA routing
+    html_files = [
+        Path("../frontend/.next/standalone/index.html"),
+        Path("../frontend/.next/server/pages/index.html"), 
+        Path("../frontend/dist/index.html"),
+        Path("../frontend/out/index.html")
+    ]
     
-    try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            # Bygg proxy URL
-            target_url = f"{frontend_url}/{path}" if path else frontend_url
-            logger.info(f"Proxying request to: {target_url}")
-            
-            # Kopier headers fra original request
-            headers = dict(request.headers)
-            headers.pop("host", None)  # Fjern host header
-            
-            # Proxy request
-            response = await client.request(
-                method=request.method,
-                url=target_url,
-                headers=headers,
-                params=request.query_params,
-                content=await request.body() if request.method in ["POST", "PUT", "PATCH"] else None,
-            )
-            
-            # Return proxied response
-            return Response(
-                content=response.content,
-                status_code=response.status_code,
-                headers=dict(response.headers),
-                media_type=response.headers.get("content-type")
-            )
-    except httpx.ConnectError as e:
-        logger.error(f"Kunne ikke koble til frontend på {frontend_url}: {e}")
-        # Fallback response
-        return {
-            "message": "GPSRAG Fullstack App",
-            "version": "1.0.0", 
-            "status": "active",
-            "api_docs": "/docs",
-            "frontend_status": f"Frontend starter opp... (Port {frontend_port})",
-            "frontend_url": frontend_url
-        }
-    except Exception as e:
-        logger.error(f"Frontend proxy feil: {e}")
-        # Fallback response
-        return {
-            "message": "GPSRAG Fullstack App",
-            "version": "1.0.0",
-            "status": "active", 
-            "api_docs": "/docs",
-            "frontend_error": f"Frontend ikke tilgjengelig: {str(e)}"
-        }
+    for html_file in html_files:
+        if html_file.exists():
+            logger.info(f"Serving frontend from: {html_file}")
+            return FileResponse(str(html_file))
+    
+    # Fallback response hvis ingen HTML filer finnes
+    return {
+        "message": "GPSRAG Fullstack App",
+        "version": "1.0.0", 
+        "status": "active",
+        "api_docs": "/docs",
+        "frontend_status": "Ready - Frontend bygges...",
+        "note": "Fullstack deployment aktiv"
+    }
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
