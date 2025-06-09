@@ -3,9 +3,9 @@ GPSRAG API Gateway
 Hovedapplikasjon som håndterer alle API-kall og koordinerer mellom tjenester
 """
 
-from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, WebSocket
+from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, WebSocket, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -14,6 +14,7 @@ import os
 from typing import List, Optional
 import asyncio
 from pathlib import Path
+import httpx
 
 from src.config import settings
 from src.database import engine, get_db, Base
@@ -73,10 +74,12 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 app.include_router(visualizations.router, prefix="/api/visualizations", tags=["visualizations"])
 
 # Serve frontend static files if they exist
-frontend_path = Path("../frontend")
-if frontend_path.exists():
+frontend_static_path = Path("../frontend/.next/static")
+frontend_public_path = Path("../frontend/public")
+if frontend_static_path.exists():
     # Serve Next.js static files
     app.mount("/_next/static", StaticFiles(directory="../frontend/.next/static"), name="next-static")
+if frontend_public_path.exists():
     app.mount("/static", StaticFiles(directory="../frontend/public"), name="public")
 
 @app.websocket("/ws/{client_id}")
@@ -103,22 +106,53 @@ async def api_root():
         "docs": "/docs"
     }
 
-# Serve frontend index.html for all non-API routes
-@app.get("/{path:path}")
-async def serve_frontend(path: str):
-    """Serve frontend React app for alle ruter som ikke er API"""
-    frontend_index = Path("../frontend/server.js")
-    if frontend_index.exists():
-        # Hvis Next.js standalone er tilgjengelig
-        return FileResponse("../frontend/server.js")
-    else:
-        # Fallback til API informasjon
+# Proxy frontend requests to Next.js server
+@app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+async def proxy_frontend(request: Request, path: str):
+    """Proxy alle ikke-API ruter til Next.js frontend serveren"""
+    # Sjekk om dette er en API-rute som ikke skal proxies
+    if path.startswith("api/") or path in ["docs", "redoc"]:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # Proxy til Next.js server
+    frontend_port = int(os.getenv("PORT", "8000")) + 1
+    frontend_url = f"http://localhost:{frontend_port}"
+    
+    try:
+        async with httpx.AsyncClient() as client:
+            # Bygg proxy URL
+            target_url = f"{frontend_url}/{path}" if path else frontend_url
+            
+            # Kopier headers fra original request
+            headers = dict(request.headers)
+            headers.pop("host", None)  # Fjern host header
+            
+            # Proxy request
+            response = await client.request(
+                method=request.method,
+                url=target_url,
+                headers=headers,
+                params=request.query_params,
+                content=await request.body() if request.method in ["POST", "PUT", "PATCH"] else None,
+                timeout=30.0
+            )
+            
+            # Return proxied response
+            return Response(
+                content=response.content,
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("content-type")
+            )
+    except Exception as e:
+        logger.error(f"Frontend proxy feil: {e}")
+        # Fallback response
         return {
-            "message": "Velkommen til GPSRAG API",
+            "message": "GPSRAG Fullstack App",
             "version": "1.0.0",
             "status": "active",
-            "docs": "/docs",
-            "frontend": "Frontend integrasjon pågår..."
+            "api_docs": "/docs",
+            "frontend_error": f"Frontend ikke tilgjengelig: {str(e)}"
         }
 
 @app.exception_handler(HTTPException)

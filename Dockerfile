@@ -18,11 +18,15 @@ RUN npm run build
 # Stage 2: Python Backend med Frontend
 FROM python:3.11-slim
 
-# Installer system dependencies
+# Installer system dependencies inkludert Node.js
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
     && rm -rf /var/lib/apt/lists/*
+
+# Installer Node.js 18
+RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
+    && apt-get install -y nodejs
 
 # Opprett app directory
 WORKDIR /app
@@ -41,6 +45,9 @@ COPY services/api-gateway/ ./backend/
 COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/
 COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
+
+# Kopier built HTML og assets (hvis de eksisterer)
+RUN mkdir -p ./frontend/out
 
 # Opprett startup script
 COPY start-fullstack.sh ./start-fullstack.sh
