@@ -1,0 +1,215 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15
+    environment:
+      POSTGRES_DB: gpsrag
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - gpsrag-network
+
+  # Weaviate Vector Database
+  weaviate:
+    image: semitechnologies/weaviate:1.25.1
+    ports:
+      - "8080:8080"
+    environment:
+      QUERY_DEFAULTS_LIMIT: 25
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: 'true'
+      PERSISTENCE_DATA_PATH: '/var/lib/weaviate'
+      DEFAULT_VECTORIZER_MODULE: 'text2vec-transformers'
+      ENABLE_MODULES: 'text2vec-transformers,text2vec-openai,text2vec-cohere,text2vec-huggingface,ref2vec-centroid,generative-openai,qna-openai'
+      CLUSTER_HOSTNAME: 'node1'
+      # Transformers specific configuration
+      TRANSFORMERS_INFERENCE_API: 'http://t2v-transformers:8080'
+    volumes:
+      - weaviate_data:/var/lib/weaviate
+    networks:
+      - gpsrag-network
+    depends_on:
+      - t2v-transformers
+
+  # MinIO Object Storage
+  minio:
+    image: minio/minio:latest
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    volumes:
+      - minio_data:/data
+    networks:
+      - gpsrag-network
+
+  # Redis for Caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - gpsrag-network
+
+  # API Gateway
+  api-gateway:
+    build:
+      context: ./services/api-gateway
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/gpsrag
+      - WEAVIATE_URL=http://weaviate:8080
+      - REDIS_URL=redis://redis:6379
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - postgres
+      - weaviate
+      - redis
+      - minio
+    volumes:
+      - ./services/api-gateway:/app
+      - ./data:/app/data
+    networks:
+      - gpsrag-network
+    restart: unless-stopped
+
+  # Ingestion Service
+  ingestion:
+    build:
+      context: ./services/ingestion
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/gpsrag
+      - WEAVIATE_URL=http://weaviate:8080
+      - MINIO_ENDPOINT=minio:9000
+      - MINIO_ACCESS_KEY=minioadmin
+      - MINIO_SECRET_KEY=minioadmin
+    depends_on:
+      - postgres
+      - weaviate
+      - minio
+    volumes:
+      - ./services/ingestion:/app
+      - ./data:/app/data
+    networks:
+      - gpsrag-network
+    restart: unless-stopped
+
+  # RAG Engine
+  rag-engine:
+    build:
+      context: ./services/rag-engine
+      dockerfile: Dockerfile
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/gpsrag
+      - WEAVIATE_URL=http://weaviate:8080
+      - OPENAI_API_KEY=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
+    depends_on:
+      - postgres
+      - weaviate
+    volumes:
+      - ./services/rag-engine:/app
+    networks:
+      - gpsrag-network
+    restart: unless-stopped
+
+  # Visualization Service
+  visualization:
+    build:
+      context: ./services/visualization
+      dockerfile: Dockerfile
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/gpsrag
+    depends_on:
+      - postgres
+    volumes:
+      - ./services/visualization:/app
+    networks:
+      - gpsrag-network
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - REACT_APP_API_URL=http://localhost:8000
+    depends_on:
+      - api-gateway
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    networks:
+      - gpsrag-network
+    restart: unless-stopped
+
+  # Airflow (MLOps)
+  airflow-webserver:
+    image: apache/airflow:2.7.1
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://postgres:postgres@postgres:5432/airflow
+      - AIRFLOW__CORE__FERNET_KEY=81HqDtbqAywKSOumSHMpQIBZy8lD-vb5H3kJV5Nm8gg=
+      - AIRFLOW__WEBSERVER__SECRET_KEY=mysecretkey
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    ports:
+      - "8081:8080"
+    depends_on:
+      - postgres
+    volumes:
+      - ./services/mlops/dags:/opt/airflow/dags
+      - ./services/mlops/plugins:/opt/airflow/plugins
+      - ./data:/opt/airflow/data
+    networks:
+      - gpsrag-network
+    command: webserver
+
+  # Grafana Monitoring
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/docker/grafana/dashboards:/etc/grafana/provisioning/dashboards
+    networks:
+      - gpsrag-network
+
+  # Transformers inference API for Weaviate
+  t2v-transformers:
+    image: semitechnologies/transformers-inference:sentence-transformers-multi-qa-MiniLM-L6-cos-v1
+    environment:
+      ENABLE_CUDA: '0'
+    networks:
+      - gpsrag-network
+
+volumes:
+  postgres_data:
+  weaviate_data:
+  minio_data:
+  redis_data:
+  grafana_data:
+
+networks:
+  gpsrag-network:
+    driver: bridge 

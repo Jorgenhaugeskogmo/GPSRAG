@@ -1,0 +1,1 @@
+Dette er en test PDF fil for u-blox GPS moduler. GPS (Global Positioning System) bruker satellitter for posisjonering.
