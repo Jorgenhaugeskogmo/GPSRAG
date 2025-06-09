@@ -1,64 +1,53 @@
-# GPSRAG Railway Deployment - Simplified Single Container
-# Backend API med statiske frontend filer
+# GPSRAG Fullstack Deployment - Frontend + Backend Integrert
+# Komplett løsning for Railway deployment
 
-# Stage 1: Build Frontend
-FROM node:18-alpine AS frontend-build
+# Stage 1: Bygg Frontend
+FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ ./
-# Sett produksjon miljøvariabler
-ENV NEXT_PUBLIC_API_URL=/api
-ENV NEXT_PUBLIC_WS_URL=/ws
+# Bygg frontend for produksjon
 ENV NODE_ENV=production
-
+ENV NEXT_PUBLIC_API_URL=""
+ENV NEXT_PUBLIC_WS_URL=""
 RUN npm run build
 
-# Stage 2: Python Backend med statiske filer
-FROM python:3.11-slim AS production
+# Stage 2: Python Backend med Frontend
+FROM python:3.11-slim
 
-# Install system dependencies
+# Installer system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
-    nginx \
     && rm -rf /var/lib/apt/lists/*
 
-# Create app directory
+# Opprett app directory
 WORKDIR /app
 
-# Copy Python dependencies and install
+# Kopier og installer Python dependencies
 COPY services/api-gateway/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend code
+# Installer FastAPI ekstra dependencies for statiske filer
+RUN pip install aiofiles
+
+# Kopier backend kode
 COPY services/api-gateway/ ./backend/
 
-# Copy built frontend
-COPY --from=frontend-build /app/frontend/.next/standalone ./frontend/
-COPY --from=frontend-build /app/frontend/.next/static ./frontend/.next/static/
-COPY --from=frontend-build /app/frontend/public ./frontend/public/
+# Kopier bygget frontend
+COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/
+COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
+COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
-# Create nginx config
-RUN mkdir -p /etc/nginx/sites-available /etc/nginx/sites-enabled
-COPY nginx.conf /etc/nginx/sites-available/default
-RUN ln -sf /etc/nginx/sites-available/default /etc/nginx/sites-enabled/
+# Opprett startup script
+COPY start-fullstack.sh ./start-fullstack.sh
+RUN chmod +x ./start-fullstack.sh
 
-# Create startup script
-COPY start.sh /start.sh
-RUN chmod +x /start.sh
-
-# Create non-root user
-RUN useradd -m -u 1000 appuser && chown -R appuser:appuser /app
-
-# Expose port
+# Eksponer port
 EXPOSE $PORT
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:$PORT/health || exit 1
-
-# Start the application
-CMD ["/start.sh"] 
+# Start fullstack app
+CMD ["./start-fullstack.sh"] 

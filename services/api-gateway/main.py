@@ -4,6 +4,8 @@ Hovedapplikasjon som håndterer alle API-kall og koordinerer mellom tjenester
 """
 
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File, WebSocket
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
@@ -11,6 +13,7 @@ import logging
 import os
 from typing import List, Optional
 import asyncio
+from pathlib import Path
 
 from src.config import settings
 from src.database import engine, get_db, Base
@@ -55,19 +58,26 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:3002", "http://localhost:3003", "http://frontend:3000"],
+    allow_origins=["*"],  # Åpnet for alle origins for produksjon
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Include routers
-app.include_router(health.router, prefix="/health", tags=["health"])
-app.include_router(auth.router, prefix="/auth", tags=["authentication"])
-app.include_router(documents.router, prefix="/documents", tags=["documents"])
-app.include_router(gps.router, prefix="/gps", tags=["gps"])
-app.include_router(chat.router, prefix="/chat", tags=["chat"])
-app.include_router(visualizations.router, prefix="/visualizations", tags=["visualizations"])
+# API Routes
+app.include_router(health.router, prefix="/api/health", tags=["health"])
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
+app.include_router(gps.router, prefix="/api/gps", tags=["gps"])
+app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(visualizations.router, prefix="/api/visualizations", tags=["visualizations"])
+
+# Serve frontend static files if they exist
+frontend_path = Path("../frontend")
+if frontend_path.exists():
+    # Serve Next.js static files
+    app.mount("/_next/static", StaticFiles(directory="../frontend/.next/static"), name="next-static")
+    app.mount("/static", StaticFiles(directory="../frontend/public"), name="public")
 
 @app.websocket("/ws/{client_id}")
 async def websocket_endpoint(websocket: WebSocket, client_id: str):
@@ -83,15 +93,33 @@ async def websocket_endpoint(websocket: WebSocket, client_id: str):
     finally:
         await websocket_manager.disconnect(client_id)
 
-@app.get("/")
-async def root():
-    """Root endepunkt med grunnleggende informasjon"""
+@app.get("/api")
+async def api_root():
+    """API root endepunkt"""
     return {
         "message": "Velkommen til GPSRAG API",
         "version": "1.0.0",
         "status": "active",
         "docs": "/docs"
     }
+
+# Serve frontend index.html for all non-API routes
+@app.get("/{path:path}")
+async def serve_frontend(path: str):
+    """Serve frontend React app for alle ruter som ikke er API"""
+    frontend_index = Path("../frontend/server.js")
+    if frontend_index.exists():
+        # Hvis Next.js standalone er tilgjengelig
+        return FileResponse("../frontend/server.js")
+    else:
+        # Fallback til API informasjon
+        return {
+            "message": "Velkommen til GPSRAG API",
+            "version": "1.0.0",
+            "status": "active",
+            "docs": "/docs",
+            "frontend": "Frontend integrasjon pågår..."
+        }
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):

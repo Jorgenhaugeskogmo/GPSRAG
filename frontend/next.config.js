@@ -8,16 +8,21 @@ const nextConfig = {
     NEXT_PUBLIC_WS_URL: process.env.NEXT_PUBLIC_WS_URL || '/ws',
   },
   async rewrites() {
-    // Only use rewrites in development
-    if (process.env.NODE_ENV === 'development') {
-      return [
-        {
-          source: '/api/:path*',
-          destination: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/:path*',
-        },
-      ];
-    }
-    return [];
+    // API proxy for fullstack deployment
+    return [
+      {
+        source: '/api/:path*',
+        destination: '/api/:path*', // Served by FastAPI backend
+      },
+      {
+        source: '/docs',
+        destination: '/docs', // FastAPI docs
+      },
+      {
+        source: '/redoc',
+        destination: '/redoc', // FastAPI redoc
+      },
+    ];
   },
 };
 
