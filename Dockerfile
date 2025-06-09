@@ -9,19 +9,21 @@ COPY frontend/package*.json ./
 RUN npm ci
 
 COPY frontend/ ./
-# Bygg frontend for produksjon
+# Bygg frontend for produksjon med riktig API URL
 ENV NODE_ENV=production
-ENV NEXT_PUBLIC_API_URL=""
-ENV NEXT_PUBLIC_WS_URL=""
+ENV NEXT_PUBLIC_API_URL="https://gpsrag-production.up.railway.app"
+ENV NEXT_PUBLIC_WS_URL="wss://gpsrag-production.up.railway.app"
 RUN npm run build
+RUN npm run export || echo "Export ikke tilgjengelig, bruker build"
 
 # Stage 2: Python Backend med Frontend
 FROM python:3.11-slim
 
-# Installer system dependencies inkludert Node.js
+# Installer system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    sqlite3 \
     && rm -rf /var/lib/apt/lists/*
 
 # Installer Node.js 18
@@ -35,20 +37,23 @@ WORKDIR /app
 COPY services/api-gateway/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Installer FastAPI ekstra dependencies for statiske filer
-RUN pip install aiofiles
+# Installer ekstra dependencies for Railway
+RUN pip install aiofiles sqlalchemy[sqlite]
 
 # Kopier backend kode
 COPY services/api-gateway/ ./backend/
 
-# Kopier bygget frontend (statisk export)
-COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
+# Kopier bygget frontend
+COPY --from=frontend-builder /app/frontend/out ./frontend/out
 COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
 
-# Opprett startup script
+# Opprett Railway-spesifikk startup script
 COPY start-fullstack.sh ./start-fullstack.sh
 RUN chmod +x ./start-fullstack.sh
+
+# Lag SQLite database directory
+RUN mkdir -p /app/data
 
 # Eksponer port
 EXPOSE $PORT

@@ -60,7 +60,7 @@ export default function ChatInterface() {
 
     try {
       // Send til RAG API
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/chat/`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/chat/chat/`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
