@@ -6,11 +6,9 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 aiofiles==23.1.0
 
-# RAG Dependencies - AKTIVERT! (stabil versjon)
+# RAG Dependencies - MINIMAL og STABIL
 openai==1.40.0
 pypdf==4.2.0
-numpy==1.24.3
 chromadb==0.4.22
-tiktoken==0.5.1
 
 # Build timestamp: RAG-ENABLED-2025-06-10 
