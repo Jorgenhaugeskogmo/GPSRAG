@@ -26,9 +26,13 @@ class GPSRAGService:
         """Initialiserer RAG service"""
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_api_key:
-            logger.warning("⚠️ OPENAI_API_KEY mangler - RAG vil ikke fungere")
+            logger.error("❌ OPENAI_API_KEY mangler - RAG vil ikke fungere")
+            logger.error("🔧 Sett OPENAI_API_KEY i Railway environment variables")
+        else:
+            logger.info(f"✅ OpenAI API nøkkel funnet (starter med: {self.openai_api_key[:8]}...)")
             
         # OpenAI klient vil bli initialisert når behov
+        logger.info("🚀 Initialiserer RAG service...")
         
         # Initialiser ChromaDB (lokal vector database for Railway)
         self.chroma_client = chromadb.PersistentClient(

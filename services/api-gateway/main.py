@@ -93,6 +93,20 @@ async def api_health_check():
     """API health check"""
     return {"status": "healthy", "service": "GPSRAG API Gateway", "environment": "Railway"}
 
+@app.get("/api/debug")
+async def debug_info():
+    """Debug informasjon for troubleshooting"""
+    openai_key = os.getenv("OPENAI_API_KEY")
+    return {
+        "openai_api_key_set": bool(openai_key),
+        "openai_key_preview": openai_key[:8] + "..." if openai_key else None,
+        "environment": "Railway",
+        "python_path": os.getcwd(),
+        "temp_dir_exists": os.path.exists("/tmp"),
+        "chromadb_dir": "/tmp/chromadb",
+        "chromadb_exists": os.path.exists("/tmp/chromadb")
+    }
+
 # Try to mount Next.js static assets
 try:
     next_static_path = Path("/app/frontend/.next/static")
@@ -235,6 +249,10 @@ async def upload_file(file: UploadFile = File(...)):
             
         except Exception as rag_error:
             logger.error(f"❌ RAG prosessering feilet: {rag_error}")
+            import traceback
+            detailed_error = traceback.format_exc()
+            logger.error(f"📊 Detaljert RAG feil: {detailed_error}")
+            
             # Returner suksess for fil upload, men noter RAG feil
             return {
                 "status": "partial_success",
@@ -242,7 +260,8 @@ async def upload_file(file: UploadFile = File(...)):
                 "filename": file.filename,
                 "size": file_size,
                 "processed": False,
-                "error": str(rag_error)
+                "error": str(rag_error),
+                "detailed_error": detailed_error[:500] + "..." if len(detailed_error) > 500 else detailed_error
             }
         
     except HTTPException:
