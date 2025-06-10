@@ -123,7 +123,13 @@ class GPSRAGService:
         """Lager embeddings med OpenAI"""
         try:
             from openai import OpenAI
-            client = OpenAI(api_key=self.openai_api_key)
+            
+            # Simple klient initialisering uten ekstra argumenter
+            client = OpenAI(
+                api_key=self.openai_api_key
+            )
+            
+            logger.info(f"🔄 Lager embeddings for {len(texts)} tekstblokker...")
             
             response = client.embeddings.create(
                 input=texts,
@@ -136,6 +142,8 @@ class GPSRAGService:
             
         except Exception as e:
             logger.error(f"❌ Embedding feil: {e}")
+            import traceback
+            logger.error(f"📊 Embedding traceback: {traceback.format_exc()}")
             raise Exception(f"Kunne ikke lage embeddings: {str(e)}")
 
     async def process_document(self, file_path: str, filename: str) -> Dict[str, Any]:
@@ -278,7 +286,13 @@ SVAR:"""
 
             # 4. Kall OpenAI
             from openai import OpenAI
-            client = OpenAI(api_key=self.openai_api_key)
+            
+            # Simple klient initialisering
+            client = OpenAI(
+                api_key=self.openai_api_key
+            )
+            
+            logger.info(f"🤖 Sender query til OpenAI med {len(context)} tegn context...")
             
             response = client.chat.completions.create(
                 model="gpt-3.5-turbo",
