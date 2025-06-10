@@ -1,2 +1,5 @@
 # Ignore Vercel's legacy configuration file
 vercel.json 
+
+# Ignore Python cache files that cause Vercel build errors
+**/__pycache__ 
