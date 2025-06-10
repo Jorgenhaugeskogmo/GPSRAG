@@ -179,60 +179,7 @@ async def chat_endpoint(request: dict):
         except Exception as rag_error:
             logger.error(f"❌ RAG chat feil: {rag_error}")
             
-            # EMERGENCY FALLBACK: Check for emergency docs and do basic search
-            try:
-                if hasattr(rag_service, 'emergency_docs') and rag_service.emergency_docs:
-                    # Basic keyword search in emergency docs
-                    query_lower = message.lower()
-                    relevant_docs = []
-                    
-                    for doc in rag_service.emergency_docs:
-                        doc_text_lower = doc["text"].lower()
-                        # Simple keyword matching
-                        keywords = query_lower.split()
-                        matches = sum(1 for keyword in keywords if keyword in doc_text_lower)
-                        
-                        if matches > 0:
-                            relevant_docs.append({
-                                "filename": doc["filename"],
-                                "text": doc["text"][:500] + "..." if len(doc["text"]) > 500 else doc["text"],
-                                "relevance": matches / len(keywords)
-                            })
-                    
-                    if relevant_docs:
-                        # Sort by relevance
-                        relevant_docs.sort(key=lambda x: x["relevance"], reverse=True)
-                        best_doc = relevant_docs[0]
-                        
-                        response = f"""Basert på dokumentet "{best_doc['filename']}" fant jeg:
-
-{best_doc['text']}
-
-(Dette er et forenklet søk mens RAG-systemet optimaliseres. Full funksjonalitet kommer snart!)"""
-                        
-                        return {
-                            "response": response,
-                            "session_id": session_id,
-                            "status": "emergency_success",
-                            "sources": [{"filename": best_doc["filename"], "relevance_score": best_doc["relevance"]}],
-                            "context_used": True,
-                            "mode": "emergency_fallback"
-                        }
-                    else:
-                        emergency_response = f"Jeg har {len(rag_service.emergency_docs)} dokumenter tilgjengelig, men fant ingen som matcher '{message}'. Prøv et mer spesifikt spørsmål om GPS eller u-blox moduler."
-                        
-                        return {
-                            "response": emergency_response,
-                            "session_id": session_id,
-                            "status": "emergency_no_match",
-                            "sources": [],
-                            "context_used": False,
-                            "available_docs": len(rag_service.emergency_docs)
-                        }
-                        
-            except Exception as emergency_error:
-                logger.error(f"❌ Emergency chat fallback feilet: {emergency_error}")
-            
+            # RAG chat feilet - returnér detaljert feil
             # Fallback til enkel respons
             fallback_response = f"Beklager, RAG-systemet er midlertidig utilgjengelig. Feil: {str(rag_error)[:100]}..."
             
@@ -309,44 +256,7 @@ async def upload_file(file: UploadFile = File(...)):
             detailed_error = traceback.format_exc()
             logger.error(f"📊 Detaljert RAG feil: {detailed_error}")
             
-            # EMERGENCY FALLBACK: Basic text extraction and fake RAG processing for immediate functionality
-            try:
-                basic_text = ""
-                if file.filename.lower().endswith('.pdf'):
-                    # Try basic PDF text extraction without dependencies
-                    from pypdf import PdfReader
-                    reader = PdfReader(str(file_path))
-                    for page in reader.pages:
-                        basic_text += page.extract_text() + "\n"
-                
-                if basic_text.strip():
-                    # Store in global memory for chat (ultra-simple approach)
-                    if not hasattr(rag_service, 'emergency_docs'):
-                        rag_service.emergency_docs = []
-                    
-                    rag_service.emergency_docs.append({
-                        "filename": file.filename,
-                        "text": basic_text[:5000],  # Truncate to 5k chars
-                        "chunks": len(basic_text) // 1000 + 1
-                    })
-                    
-                    logger.info(f"✅ Emergency RAG fallback: {file.filename} lagret som emergency doc")
-                    
-                    return {
-                        "status": "success", 
-                        "message": f"Fil '{file.filename}' lastet opp med basic RAG prosessering",
-                        "filename": file.filename,
-                        "size": file_size,
-                        "processed": True,
-                        "mode": "emergency_fallback",
-                        "text_extracted": len(basic_text),
-                        "note": "Emergency RAG aktiv - full funksjonalitet kommer snart!"
-                    }
-                
-            except Exception as emergency_error:
-                logger.error(f"❌ Emergency fallback feilet også: {emergency_error}")
-            
-            # Last resort: Upload success only
+            # RAG prosessering feilet - returner detaljert feil for debugging
             return {
                 "status": "success",
                 "message": f"Fil '{file.filename}' lastet opp (RAG prosessering under feilsøking)",

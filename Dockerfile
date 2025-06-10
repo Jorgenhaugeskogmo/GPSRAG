@@ -31,8 +31,13 @@ WORKDIR /app
 # Copy backend requirements
 COPY requirements.txt .
 
-# Install Python dependencies (Railway optimized)
+# Install Python dependencies (Railway optimized) with FORCED NumPy compatibility
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# FORCE NumPy 1.x for ChromaDB compatibility - NO EXCEPTIONS!
+RUN pip install --no-cache-dir "numpy==1.24.3" --force-reinstall
+
+# Install requirements with NumPy already fixed
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy API Gateway code
