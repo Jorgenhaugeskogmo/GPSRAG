@@ -34,8 +34,15 @@ class GPSRAGService:
         # OpenAI klient vil bli initialisert når behov
         logger.info("🚀 Initialiserer RAG service...")
         
-        # Initialiser ChromaDB (lokal vector database for Railway)
+        # Initialiser ChromaDB (lokal vector database for Railway) med NumPy fix
         try:
+            # FIRST: Fix NumPy 2.0 compatibility issue
+            import numpy as np
+            if not hasattr(np, 'float_'):
+                # If we're on NumPy 2.0+, add the missing float_ alias
+                np.float_ = np.float64
+                logger.info("✅ NumPy 2.0 compatibility fix applied")
+            
             # Opprett ChromaDB directory hvis den ikke eksisterer
             chromadb_path = "/tmp/chromadb"
             os.makedirs(chromadb_path, exist_ok=True)
@@ -61,12 +68,21 @@ class GPSRAGService:
         
         except Exception as e:
             logger.error(f"❌ ChromaDB initialisering feilet: {e}")
+            import traceback
+            logger.error(f"📊 Full ChromaDB error: {traceback.format_exc()}")
+            
+            # FALLBACK: In-memory storage for Railway
             self.chroma_client = None
             self.collection = None
+            self.in_memory_docs = []  # Fallback storage
             logger.warning("⚠️ Bruker in-memory fallback for embeddings")
         
         # Tiktoken for token counting
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        
+        # Initialize in-memory fallback if not already done
+        if not hasattr(self, 'in_memory_docs'):
+            self.in_memory_docs = []
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Ekstraherer tekst fra PDF"""
@@ -194,7 +210,7 @@ class GPSRAGService:
                 metadatas.append(metadata)
                 documents.append(chunk["text"])
             
-            # Lagre i ChromaDB hvis tilgjengelig
+            # Lagre i ChromaDB hvis tilgjengelig, ellers in-memory
             if self.collection is not None:
                 self.collection.add(
                     ids=chunk_ids,
@@ -204,7 +220,15 @@ class GPSRAGService:
                 )
                 logger.info(f"✅ Dokument lagret i ChromaDB: {filename}")
             else:
-                logger.warning("⚠️ ChromaDB ikke tilgjengelig - dokumenter lagres ikke persistent")
+                # Fallback: Store in memory
+                for i, (chunk_id, embedding, metadata, document) in enumerate(zip(chunk_ids, embeddings, metadatas, documents)):
+                    self.in_memory_docs.append({
+                        "id": chunk_id,
+                        "embedding": embedding,
+                        "metadata": metadata,
+                        "document": document
+                    })
+                logger.info(f"✅ Dokument lagret in-memory: {filename} ({len(chunk_ids)} chunks)")
             
             logger.info(f"✅ Dokument prosessert: {filename} → {len(chunks)} chunks lagret")
             
@@ -221,41 +245,75 @@ class GPSRAGService:
             raise
 
     async def search_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
-        """Søker i dokumenter med RAG"""
+        """Søker i dokumenter med RAG (ChromaDB eller in-memory fallback)"""
         try:
-            if self.collection is None:
-                logger.warning("⚠️ ChromaDB ikke tilgjengelig - kan ikke søke i dokumenter")
-                return []
-            
             # Lag embedding for query
             query_embeddings = await self.create_embeddings([query])
             query_embedding = query_embeddings[0]
             
-            # Søk i ChromaDB
-            results = self.collection.query(
-                query_embeddings=[query_embedding],
-                n_results=top_k,
-                include=["documents", "metadatas", "distances"]
-            )
+            if self.collection is not None:
+                # Søk i ChromaDB
+                results = self.collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=top_k,
+                    include=["documents", "metadatas", "distances"]
+                )
+                
+                # Format resultater
+                search_results = []
+                if results["documents"] and len(results["documents"][0]) > 0:
+                    for i in range(len(results["documents"][0])):
+                        result = {
+                            "text": results["documents"][0][i],
+                            "metadata": results["metadatas"][0][i],
+                            "relevance_score": 1 - results["distances"][0][i],  # Convert distance to similarity
+                            "filename": results["metadatas"][0][i]["filename"],
+                            "chunk_index": results["metadatas"][0][i]["chunk_index"]
+                        }
+                        search_results.append(result)
+                
+                logger.info(f"✅ ChromaDB: Fant {len(search_results)} relevante chunks")
+                return search_results
             
-            # Format resultater
-            search_results = []
-            if results["documents"] and len(results["documents"][0]) > 0:
-                for i in range(len(results["documents"][0])):
-                    result = {
-                        "text": results["documents"][0][i],
-                        "metadata": results["metadatas"][0][i],
-                        "relevance_score": 1 - results["distances"][0][i],  # Convert distance to similarity
-                        "filename": results["metadatas"][0][i]["filename"],
-                        "chunk_index": results["metadatas"][0][i]["chunk_index"]
-                    }
-                    search_results.append(result)
+            elif hasattr(self, 'in_memory_docs') and self.in_memory_docs:
+                # Fallback: In-memory similarity search
+                import numpy as np
+                
+                search_results = []
+                query_embedding_np = np.array(query_embedding)
+                
+                # Calculate similarities
+                similarities = []
+                for doc in self.in_memory_docs:
+                    doc_embedding = np.array(doc["embedding"])
+                    similarity = np.dot(query_embedding_np, doc_embedding) / (
+                        np.linalg.norm(query_embedding_np) * np.linalg.norm(doc_embedding)
+                    )
+                    similarities.append((similarity, doc))
+                
+                # Sort by similarity and take top_k
+                similarities.sort(reverse=True, key=lambda x: x[0])
+                
+                for similarity, doc in similarities[:top_k]:
+                    search_results.append({
+                        "text": doc["document"],
+                        "metadata": doc["metadata"],
+                        "relevance_score": float(similarity),
+                        "filename": doc["metadata"]["filename"],
+                        "chunk_index": doc["metadata"]["chunk_index"]
+                    })
+                
+                logger.info(f"✅ In-memory: Fant {len(search_results)} relevante chunks")
+                return search_results
             
-            logger.info(f"✅ Fant {len(search_results)} relevante chunks for query")
-            return search_results
+            else:
+                logger.warning("⚠️ Ingen dokumenter tilgjengelig for søk")
+                return []
             
         except Exception as e:
             logger.error(f"❌ Søk feilet: {e}")
+            import traceback
+            logger.error(f"📊 Search error: {traceback.format_exc()}")
             return []
 
     async def generate_rag_response(self, query: str, max_tokens: int = 500) -> Dict[str, Any]:
