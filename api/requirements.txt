@@ -1,7 +1,7 @@
 # Core FastAPI stack - minne-optimalisert
 fastapi==0.104.1
 uvicorn[standard]==0.24.0
-pydantic==2.5.0
+pydantic==2.8.2
 python-multipart==0.0.6
 
 # OpenAI og AI stack
@@ -28,5 +28,5 @@ aiofiles==23.1.0
 # Sikkerhet
 urllib3<2.0
 
-# Force new build for Railway 
-# Build timestamp: 2025-06-10-08-45 
+# Force new build for Railway - Pydantic fix
+# Build timestamp: 2025-06-10-08-50 
