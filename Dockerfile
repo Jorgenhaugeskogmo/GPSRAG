@@ -1,46 +1,36 @@
-# GPSRAG Railway Deployment - Absolute minimal memory
-FROM node:18-alpine AS frontend-builder
-
-# Minimal memory for Node.js
-ENV NODE_OPTIONS="--max_old_space_size=256"
-ENV NEXT_TELEMETRY_DISABLED=1
-
-WORKDIR /app/frontend
-COPY frontend/package*.json ./
-
-# Installer kun production dependencies
-RUN npm ci --only=production --no-audit --progress=false
-
-COPY frontend/ ./
-
-# Minimal build
-ENV NODE_ENV=production
-RUN npm run build
-
-# Stage 2: Minimal Python Backend
+# GPSRAG Railway Deployment - NO FRONTEND BUILD (ultra minimal memory)
 FROM python:3.11-alpine
 
 # Minimal system dependencies
-RUN apk add --no-cache gcc musl-dev
+RUN apk add --no-cache gcc musl-dev curl
 
 WORKDIR /app
 
 # Copy minimal requirements
 COPY requirements-minimal.txt requirements.txt
 
-# Ultra-minimal pip installation
+# Ultra-minimal pip installation - one by one to minimize memory spikes
 RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir --no-deps fastapi uvicorn pydantic
-RUN pip install --no-cache-dir python-multipart python-dotenv aiofiles
+RUN pip install --no-cache-dir fastapi==0.104.1
+RUN pip install --no-cache-dir uvicorn==0.24.0  
+RUN pip install --no-cache-dir pydantic==2.8.2
+RUN pip install --no-cache-dir python-multipart==0.0.6
+RUN pip install --no-cache-dir python-dotenv==1.0.0
+RUN pip install --no-cache-dir aiofiles==23.1.0
 
-# Copy minimal API code
+# Copy API code
 COPY api/ ./api/
 
-# Copy minimal frontend
-COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
+# Create minimal index.html for basic web interface (NO React/Next.js)
+RUN mkdir -p ./static
+RUN echo '<!DOCTYPE html><html><head><title>GPSRAG API</title></head><body><h1>GPSRAG API is running</h1><p>Backend API is available at /docs for testing</p></body></html>' > ./static/index.html
 
 # Expose port
 EXPOSE 8080
 
-# Minimal start command
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=2 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Start only backend - no frontend
 CMD ["python", "-m", "uvicorn", "api.index:app", "--host", "0.0.0.0", "--port", "8080"] 
