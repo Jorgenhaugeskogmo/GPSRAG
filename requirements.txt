@@ -1,32 +1,25 @@
-# Core FastAPI stack - minne-optimalisert for Railway
+# Railway minimal requirements - memory optimized
 fastapi==0.104.1
-uvicorn[standard]==0.24.0
+uvicorn==0.24.0
 pydantic==2.8.2
 python-multipart==0.0.6
 
-# OpenAI og AI stack - oppdatert for LangChain compatibility
+# AI essentials - only core packages
 openai==1.26.0
-tiktoken==0.7.0
 
-# Database og storage - oppdatert Weaviate
+# Database - simplified Weaviate
 weaviate-client==4.15.0
-httpx==0.27.0
 
-# LangChain ecosystem - kompatible versjoner med Weaviate v4
-langchain==0.2.0
-langchain-community==0.2.0
+# Basic LangChain - minimal set
+langchain-core==0.2.43
 langchain-openai==0.1.8
-langchain-weaviate==0.0.3
 
-# PDF og dokumenthåndtering  
+# PDF processing
 pypdf==4.2.0
 
 # Utilities
 python-dotenv==1.0.0
 aiofiles==23.1.0
 
-# Sikkerhet
-urllib3<2.0
-
-# Railway requirements - OpenAI 1.26.0 fix
-# Build timestamp: 2025-06-10-09-00 
+# Railway minimal - reduced dependencies
+# Build timestamp: 2025-06-10-09-05 

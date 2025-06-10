@@ -5,12 +5,7 @@ from pydantic import BaseModel
 import os
 import weaviate
 from weaviate.auth import AuthApiKey
-from langchain_openai import ChatOpenAI
-from langchain.prompts import ChatPromptTemplate
-from langchain.schema.output_parser import StrOutputParser
-from langchain.schema.runnable import RunnablePassthrough
-from langchain_weaviate import WeaviateVectorStore
-from langchain_openai import OpenAIEmbeddings
+import openai
 from dotenv import load_dotenv
 import logging
 
@@ -41,7 +36,7 @@ handler = app # For Vercel
 
 # --- Weaviate and OpenAI Setup ---
 weaviate_client = None
-rag_chain = None
+openai_client = None
 init_error = None
 
 try:
@@ -64,72 +59,106 @@ try:
         headers={"X-OpenAI-Api-Key": OPENAI_API_KEY}
     )
 
-    # Opprett embeddings og vector store
-    embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
-    
-    # Bruk LangChain Weaviate integration
-    vectorstore = WeaviateVectorStore(
-        client=weaviate_client,
-        index_name="Ublox_docs",
-        text_key="content",
-        embedding=embeddings
-    )
+    # Opprett OpenAI client
+    openai_client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-    # Opprett retriever
-    retriever = vectorstore.as_retriever(
-        search_type="hybrid",
-        search_kwargs={"k": 5, "alpha": 0.5}
-    )
-
-    template = """Du er en ekspert på GPS og u-blox-teknologi. Svar på spørsmålet kun basert på følgende kontekst:
-    {context}
-
-    Spørsmål: {question}
-    """
-    prompt = ChatPromptTemplate.from_template(template)
-
-    model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3, api_key=OPENAI_API_KEY)
-
-    rag_chain = (
-        {"context": retriever, "question": RunnablePassthrough()}
-        | prompt
-        | model
-        | StrOutputParser()
-    )
-    logger.info("✅ RAG chain initialisert vellykket med Weaviate v4.")
+    logger.info("✅ Weaviate og OpenAI clients initialisert vellykket.")
 
 except Exception as e:
     init_error = str(e)
-    logger.error(f"❌ Feil under initialisering av RAG chain: {init_error}")
+    logger.error(f"❌ Feil under initialisering: {init_error}")
+
+
+def search_documents(query: str, k: int = 5):
+    """Søk i Weaviate for relevante dokumenter"""
+    try:
+        collection = weaviate_client.collections.get("Ublox_docs")
+        
+        # Hybrid search med både semantic og keyword
+        response = collection.query.hybrid(
+            query=query,
+            limit=k,
+            alpha=0.5  # Balanse mellom semantic og keyword search
+        )
+        
+        documents = []
+        for obj in response.objects:
+            documents.append({
+                "content": obj.properties.get("content", ""),
+                "metadata": obj.properties
+            })
+        
+        return documents
+    except Exception as e:
+        logger.error(f"Feil under søk: {e}")
+        return []
+
+
+def generate_response(query: str, context_docs: list):
+    """Generer svar med OpenAI basert på kontekst"""
+    try:
+        # Bygg kontekst fra dokumenter
+        context = "\n\n".join([doc["content"] for doc in context_docs])
+        
+        # Lag prompt
+        system_prompt = """Du er en ekspert på GPS og u-blox-teknologi. Svar på spørsmålet kun basert på følgende kontekst. 
+        Hvis informasjonen ikke finnes i konteksten, si det tydelig."""
+        
+        user_prompt = f"""Kontekst:
+{context}
+
+Spørsmål: {query}"""
+
+        # Kall OpenAI
+        response = openai_client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            temperature=0.3,
+            max_tokens=1000
+        )
+        
+        return response.choices[0].message.content
+    except Exception as e:
+        logger.error(f"Feil under OpenAI kall: {e}")
+        raise
 
 
 # --- API Endpoints ---
 @app.post("/")
 async def chat_handler(request: ChatRequest):
-    if rag_chain is None:
-        logger.error(f"Forsøkte å kjøre chat, men RAG chain er ikke initialisert. Feil: {init_error}")
-        raise HTTPException(status_code=500, detail=f"RAG chain initialization failed: {init_error}")
+    if weaviate_client is None or openai_client is None:
+        logger.error(f"Forsøkte å kjøre chat, men clients er ikke initialisert. Feil: {init_error}")
+        raise HTTPException(status_code=500, detail=f"Client initialization failed: {init_error}")
 
     try:
         query = request.message
         logger.info(f"Mottok spørsmål: {query}")
         
-        # Her henter vi kildene FØR vi kaller kjeden
-        source_documents = retriever.get_relevant_documents(query)
+        # Søk etter relevante dokumenter
+        documents = search_documents(query, k=5)
         
-        response_text = rag_chain.invoke(query)
+        if not documents:
+            return JSONResponse(content={
+                "response": "Beklager, jeg fant ingen relevante dokumenter for spørsmålet ditt.",
+                "sources": []
+            })
+        
+        # Generer svar
+        response_text = generate_response(query, documents)
         logger.info(f"Genererte svar: {response_text[:100]}...")
 
+        # Lag kilder
         sources = []
-        for doc in source_documents:
-            # Weaviate kan returnere metadata litt annerledes
-            metadata = doc.metadata if hasattr(doc, 'metadata') else {}
+        for doc in documents:
+            metadata = doc.get("metadata", {})
             sources.append({
                 "filename": metadata.get("filename", "Ukjent fil"),
-                "excerpt": doc.page_content,
-                # Disse er ikke alltid tilgjengelig, så vi bruker get med default
+                "excerpt": doc["content"][:200] + "..." if len(doc["content"]) > 200 else doc["content"],
                 "page": metadata.get("page"),
-                "relevance_score": metadata.get("_additional", {}).get("score", 0)
+                "relevance_score": metadata.get("score", 0)
             })
 
         return JSONResponse(content={"response": response_text, "sources": sources})
@@ -142,8 +171,8 @@ async def chat_handler(request: ChatRequest):
 async def health():
     if init_error:
         return {"status": "unhealthy", "error": init_error}
-    return {"status": "healthy", "rag_enabled": rag_chain is not None}
+    return {"status": "healthy", "clients_ready": weaviate_client is not None and openai_client is not None}
 
 @app.get("/")
 def root():
-    return {"message": "GPSRAG API (Chat) er live."} 
+    return {"message": "GPSRAG API (Chat) er live med minimal dependencies."} 
