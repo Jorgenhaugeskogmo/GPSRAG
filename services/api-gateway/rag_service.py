@@ -122,21 +122,19 @@ class GPSRAGService:
     async def create_embeddings(self, texts: List[str]) -> List[List[float]]:
         """Lager embeddings med OpenAI"""
         try:
-            from openai import OpenAI
+            import openai
             
-            # Simple klient initialisering uten ekstra argumenter
-            client = OpenAI(
-                api_key=self.openai_api_key
-            )
+            # Bruk legacy approach som er mest stabil
+            openai.api_key = self.openai_api_key
             
             logger.info(f"🔄 Lager embeddings for {len(texts)} tekstblokker...")
             
-            response = client.embeddings.create(
+            response = openai.Embedding.create(
                 input=texts,
                 model="text-embedding-ada-002"
             )
             
-            embeddings = [item.embedding for item in response.data]
+            embeddings = [item['embedding'] for item in response['data']]
             logger.info(f"✅ Lagde {len(embeddings)} embeddings")
             return embeddings
             
@@ -285,16 +283,14 @@ INSTRUKSJONER:
 SVAR:"""
 
             # 4. Kall OpenAI
-            from openai import OpenAI
+            import openai
             
-            # Simple klient initialisering
-            client = OpenAI(
-                api_key=self.openai_api_key
-            )
+            # Bruk legacy approach
+            openai.api_key = self.openai_api_key
             
             logger.info(f"🤖 Sender query til OpenAI med {len(context)} tegn context...")
             
-            response = client.chat.completions.create(
+            response = openai.ChatCompletion.create(
                 model="gpt-3.5-turbo",
                 messages=[
                     {"role": "system", "content": "Du er en ekspert på GPS-teknologi og u-blox moduler. Svar alltid på norsk og bruk kun informasjonen fra de oppgitte dokumentene."},
