@@ -1,0 +1,24 @@
+# GPSRAG Railway Environment Variables
+# Kopier disse variablene til Railway Environment Variables panel
+
+# OpenAI Configuration (REQUIRED - hent fra OpenAI Platform)
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Weaviate Configuration (REQUIRED - hent fra Weaviate Cloud)
+WEAVIATE_URL=https://your-cluster.weaviate.network
+WEAVIATE_API_KEY=your_weaviate_api_key_here
+
+# Application Settings (Railway setter disse automatisk)
+NODE_ENV=production
+NEXT_PUBLIC_API_URL=https://gpsrag-production.up.railway.app
+NEXT_PUBLIC_WS_URL=wss://gpsrag-production.up.railway.app
+
+# Railway setter automatisk:
+# PORT=8000 (eller tildelt port)
+# RAILWAY_STATIC_URL=din-deployment-url
+
+# INSTRUKSJONER for Railway:
+# 1. Gå til ditt Railway-prosjekt
+# 2. Klikk på "Variables" tab
+# 3. Legg til hver variabel over (ikke kopier kommentarene)
+# 4. Erstatt placeholder-verdiene med dine faktiske API-nøkler 

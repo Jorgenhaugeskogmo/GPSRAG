@@ -1,61 +1,58 @@
-# GPSRAG Fullstack Deployment - Frontend + Backend Integrert
-# Komplett løsning for Railway deployment
-
-# Stage 1: Bygg Frontend
+# GPSRAG Railway Deployment - Optimalisert for minne og hastighet
 FROM node:18-alpine AS frontend-builder
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm ci
+
+# Installer frontend dependencies med cache optimalisering
+RUN npm ci --no-audit --progress=false
 
 COPY frontend/ ./
-# Bygg frontend for produksjon med riktig API URL
+
+# Bygg frontend for produksjon
 ENV NODE_ENV=production
-ENV NEXT_PUBLIC_API_URL="https://gpsrag-production.up.railway.app"
-ENV NEXT_PUBLIC_WS_URL="wss://gpsrag-production.up.railway.app"
 RUN npm run build
 
-# Stage 2: Python Backend med Frontend
+# Stage 2: Python Backend 
 FROM python:3.11-slim
 
-# Installer system dependencies
+# Installer kun nødvendige system dependencies
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
-    sqlite3 \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* \
+    && apt-get clean
 
-# Installer Node.js 18
+# Installer Node.js 18 (for serving frontend)
 RUN curl -fsSL https://deb.nodesource.com/setup_18.x | bash - \
-    && apt-get install -y nodejs
+    && apt-get install -y nodejs \
+    && apt-get clean
 
-# Opprett app directory
 WORKDIR /app
 
-# Kopier og installer Python dependencies
-COPY services/api-gateway/requirements.txt ./requirements.txt
-RUN pip install --no-cache-dir -r requirements.txt
+# Kopier requirements.txt først for bedre caching
+COPY api/requirements.txt ./requirements.txt
 
-# Installer ekstra dependencies for Railway
-RUN pip install aiofiles sqlalchemy[sqlite]
+# Installer Python dependencies med minneoptimalisering
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir -r requirements.txt
 
 # Kopier backend kode
-COPY services/api-gateway/ ./backend/
+COPY api/ ./backend/
 
-# Kopier standalone frontend build
-COPY --from=frontend-builder /app/frontend/.next/standalone ./frontend/
-COPY --from=frontend-builder /app/frontend/.next/static ./frontend/.next/static
+# Kopier frontend build
+COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
+COPY --from=frontend-builder /app/frontend/package.json ./frontend/
 
-# Opprett Railway-spesifikk startup script
-COPY start-fullstack.sh ./start-fullstack.sh
-RUN chmod +x ./start-fullstack.sh
-
-# Lag SQLite database directory
-RUN mkdir -p /app/data
+# Lag startup script for Railway
+RUN echo '#!/bin/bash\n\
+cd /app/frontend && npm start &\n\
+cd /app/backend && python -m uvicorn index:app --host 0.0.0.0 --port $PORT\n\
+' > /app/start.sh && chmod +x /app/start.sh
 
 # Eksponer port
 EXPOSE $PORT
 
-# Start fullstack app
-CMD ["./start-fullstack.sh"] 
+# Start begge tjenester
+CMD ["/app/start.sh"] 

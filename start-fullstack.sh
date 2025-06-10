@@ -1,29 +1,49 @@
 #!/bin/bash
 
-# Sett miljøvariabler for Railway
+# GPSRAG Fullstack Startup for Railway
+echo "🚀 Starter GPSRAG på Railway..."
+
+# Sett standardverdier hvis ikke definert
 export PORT=${PORT:-8000}
-export DATABASE_URL=${DATABASE_URL:-"sqlite:///./data/gpsrag.db"}
-export RAILWAY_STATIC_URL=${RAILWAY_STATIC_URL:-"https://gpsrag-production.up.railway.app"}
+export NODE_ENV=${NODE_ENV:-production}
 
-echo "🚀 Starter GPSRAG Fullstack på port $PORT"
-echo "📊 Database: $DATABASE_URL"
-echo "🌐 Base URL: $RAILWAY_STATIC_URL"
+# Logg miljøvariabler (uten å eksponere hemmeligheter)
+echo "📋 Miljø:"
+echo "  PORT: $PORT"
+echo "  NODE_ENV: $NODE_ENV"
+echo "  OPENAI_API_KEY: ${OPENAI_API_KEY:+***set***}"
+echo "  WEAVIATE_URL: ${WEAVIATE_URL:-not set}"
 
-# Opprett SQLite database hvis den ikke finnes
-mkdir -p /app/data
-touch /app/data/gpsrag.db
+# Start frontend i bakgrunnen
+echo "🎨 Starter Next.js frontend..."
+cd /app/frontend
+npm start &
+FRONTEND_PID=$!
 
-# Gå til backend mappen
+# Vent litt for frontend å starte
+sleep 3
+
+# Start backend API
+echo "🔧 Starter FastAPI backend..."
 cd /app/backend
+python -m uvicorn index:app --host 0.0.0.0 --port $PORT &
+BACKEND_PID=$!
 
-echo "🔧 Initialiserer SQLite database..."
-python -c "
-from src.database import engine, Base
-Base.metadata.create_all(bind=engine)
-print('✅ Database tabeller opprettet')
-"
+# Health check function
+health_check() {
+    curl -f http://localhost:$PORT/health > /dev/null 2>&1
+    return $?
+}
 
-echo "🎯 Starter integrert fullstack applikasjon på port $PORT"
+# Vent på at backend er klar
+echo "⏳ Venter på backend..."
+for i in {1..30}; do
+    if health_check; then
+        echo "✅ Backend er klar!"
+        break
+    fi
+    sleep 2
+done
 
-# Start FastAPI som serverer både API og frontend
-exec python -m uvicorn main:app --host 0.0.0.0 --port $PORT --log-level info 
+# Hold prosessen i live
+wait $BACKEND_PID 
