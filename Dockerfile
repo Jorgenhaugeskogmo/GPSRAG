@@ -40,14 +40,19 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
 # Kopier backend kode
 COPY api/ ./backend/
 
-# Kopier frontend build
+# Kopier frontend build OG node_modules for serving
 COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
 COPY --from=frontend-builder /app/frontend/package.json ./frontend/
+COPY --from=frontend-builder /app/frontend/node_modules ./frontend/node_modules
 
-# Lag startup script for Railway
+# Lag startup script for Railway med bedre feilhåndtering
 RUN echo '#!/bin/bash\n\
+set -e\n\
+echo "🚀 Starter GPSRAG på Railway..."\n\
+echo "Frontend: npm start i bakgrunnen"\n\
 cd /app/frontend && npm start &\n\
+echo "Backend: Starting FastAPI på port $PORT"\n\
 cd /app/backend && python -m uvicorn index:app --host 0.0.0.0 --port $PORT\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 

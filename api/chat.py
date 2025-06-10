@@ -49,6 +49,11 @@ try:
     if not all([WEAVIATE_URL, WEAVIATE_API_KEY, OPENAI_API_KEY]):
         raise ValueError("Mangler nødvendige miljøvariabler: WEAVIATE_URL, WEAVIATE_API_KEY, OPENAI_API_KEY")
 
+    # Fikser URL hvis den mangler scheme
+    if not WEAVIATE_URL.startswith(('http://', 'https://')):
+        WEAVIATE_URL = 'https://' + WEAVIATE_URL
+        logger.info(f"Lagt til https:// prefiks til Weaviate URL: {WEAVIATE_URL}")
+
     weaviate_client = weaviate.Client(
         url=WEAVIATE_URL,
         auth_client_secret=weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY),

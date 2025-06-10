@@ -53,6 +53,11 @@ async def upload_document(file: UploadFile = File(...)):
             logger.error("Mangler miljøvariabler")
             raise ValueError("Missing environment variables")
 
+        # Fikser URL hvis den mangler scheme
+        if not WEAVIATE_URL.startswith(('http://', 'https://')):
+            WEAVIATE_URL = 'https://' + WEAVIATE_URL
+            logger.info(f"Lagt til https:// prefiks til Weaviate URL: {WEAVIATE_URL}")
+
         # Koble til Weaviate
         auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
         client = weaviate.Client(
