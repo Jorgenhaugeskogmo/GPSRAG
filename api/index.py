@@ -1,20 +1,15 @@
 """
-Vercel API Entry Point for GPSRAG
-Importerer og eksponerer hele API Gateway applikasjonen
+Railway Entry Point for GPSRAG
+Importerer og eksponerer FastAPI applikasjonen
 """
 
-import os
-import sys
-from pathlib import Path
+# Import the FastAPI app from chat.py
+from chat import app
 
-# Add the services directory to the Python path
-current_dir = Path(__file__).parent
-project_root = current_dir.parent
-services_dir = project_root / "services" / "api-gateway"
-sys.path.insert(0, str(services_dir))
+# Export the app for Railway
+handler = app
 
-# Import the FastAPI app from api-gateway
-from main import app
-
-# Export the app for Vercel
-handler = app 
+# For development
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
