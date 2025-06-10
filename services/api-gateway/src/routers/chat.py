@@ -12,6 +12,7 @@ import logging
 from pydantic import BaseModel
 import json
 import uuid
+import os
 from datetime import datetime
 
 from ..database import get_db, ChatSession, ChatMessage, User
@@ -27,7 +28,7 @@ from ..schemas.chat import (
 )
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/chat", tags=["chat"])
+router = APIRouter(tags=["chat"])
 
 @router.post("/sessions", response_model=ChatSessionResponse)
 async def create_chat_session(
@@ -268,6 +269,65 @@ async def delete_chat_session(
         )
 
 @router.post("/", response_model=ChatResponse)
+async def chat_endpoint(
+    request: ChatRequest,
+    db: Session = Depends(get_db)
+):
+    """Chat endpoint som frontend bruker - direkte RAG integration"""
+    try:
+        # Kall RAG-engine direkte
+        rag_engine_url = os.getenv("RAG_ENGINE_URL", "http://rag-engine:8002")
+        
+        async with httpx.AsyncClient() as client:
+            rag_response = await client.post(
+                f"{rag_engine_url}/query",
+                json={
+                    "question": request.message,
+                    "session_id": request.session_id or "default-session",
+                    "include_sources": True,
+                    "max_results": 5
+                },
+                timeout=30.0
+            )
+            
+            if rag_response.status_code == 200:
+                rag_data = rag_response.json()
+                
+                # Formater response som frontend forventer
+                return ChatResponse(
+                    response=rag_data.get("answer", "Beklager, jeg kunne ikke svare på det."),
+                    session_id=request.session_id or "default-session",
+                    sources=[
+                        DocumentSource(
+                            filename=source.get("filename", "Ukjent dokument"),
+                            page=source.get("page"),
+                            relevance_score=source.get("score", 0.0),
+                            excerpt=source.get("excerpt", "")
+                        )
+                        for source in rag_data.get("sources", [])
+                    ],
+                    metadata=rag_data.get("metadata", {})
+                )
+            else:
+                # Fallback hvis RAG engine feiler
+                return ChatResponse(
+                    response="Beklager, RAG-systemet er ikke tilgjengelig akkurat nå.",
+                    session_id=request.session_id or "default-session",
+                    sources=[],
+                    metadata={"fallback": True}
+                )
+                
+    except Exception as e:
+        logger.error(f"Chat endpoint error: {e}")
+        # Fallback respons
+        return ChatResponse(
+            response="Beklager, det oppstod en feil. Prøv igjen senere.",
+            session_id=request.session_id or "default-session",
+            sources=[],
+            metadata={"error": str(e)}
+        )
+
+@router.post("/message", response_model=ChatResponse)
 async def send_message(
     request: ChatRequest,
     db: Session = Depends(get_db)
