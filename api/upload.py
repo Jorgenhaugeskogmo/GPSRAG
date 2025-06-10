@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 import os
 from dotenv import load_dotenv
 import weaviate
+from weaviate.auth import AuthApiKey
 from langchain_community.document_loaders import PyPDFLoader
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 import tempfile
@@ -58,14 +59,13 @@ async def upload_document(file: UploadFile = File(...)):
             WEAVIATE_URL = 'https://' + WEAVIATE_URL
             logger.info(f"Lagt til https:// prefiks til Weaviate URL: {WEAVIATE_URL}")
 
-        # Koble til Weaviate
-        auth_config = weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY)
-        client = weaviate.Client(
-            url=WEAVIATE_URL,
-            auth_client_secret=auth_config,
-            additional_headers={"X-OpenAI-Api-Key": OPENAI_API_KEY}
+        # Koble til Weaviate v4
+        client = weaviate.connect_to_weaviate_cloud(
+            cluster_url=WEAVIATE_URL,
+            auth_credentials=AuthApiKey(WEAVIATE_API_KEY),
+            headers={"X-OpenAI-Api-Key": OPENAI_API_KEY}
         )
-        logger.info("Koblet til Weaviate")
+        logger.info("Koblet til Weaviate v4")
 
         # Last og splitt dokumentet
         loader = PyPDFLoader(tmp_file_path)
@@ -74,19 +74,23 @@ async def upload_document(file: UploadFile = File(...)):
         docs = text_splitter.split_documents(documents)
         logger.info(f"Dokument splittet i {len(docs)} deler")
 
-        # Last opp til Weaviate
-        with client.batch as batch:
-            for i, doc in enumerate(docs):
-                batch.add_data_object(
-                    data_object={
-                        "content": doc.page_content,
-                        "filename": file.filename,
-                        "page": doc.metadata.get("page", 0) + 1,
-                    },
-                    class_name="Ublox_docs",
-                )
-        logger.info("Data lastet opp til Weaviate")
+        # Last opp til Weaviate v4
+        collection = client.collections.get("Ublox_docs")
+        objects_to_insert = []
+        
+        for i, doc in enumerate(docs):
+            objects_to_insert.append({
+                "content": doc.page_content,
+                "filename": file.filename,
+                "page": doc.metadata.get("page", 0) + 1,
+            })
+        
+        # Batch insert med v4 API
+        result = collection.data.insert_many(objects_to_insert)
+        logger.info(f"Data lastet opp til Weaviate v4: {len(objects_to_insert)} objekter")
 
+        # Lukk klient og slett temp fil
+        client.close()
         os.remove(tmp_file_path)
         
         return JSONResponse(

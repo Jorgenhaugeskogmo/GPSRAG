@@ -4,10 +4,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import os
 import weaviate
+from weaviate.auth import AuthApiKey
 from langchain_openai import ChatOpenAI
 from langchain.prompts import ChatPromptTemplate
 from langchain.schema.output_parser import StrOutputParser
 from langchain.schema.runnable import RunnablePassthrough
+from langchain_weaviate import WeaviateVectorStore
+from langchain_openai import OpenAIEmbeddings
 from dotenv import load_dotenv
 import logging
 
@@ -54,13 +57,26 @@ try:
         WEAVIATE_URL = 'https://' + WEAVIATE_URL
         logger.info(f"Lagt til https:// prefiks til Weaviate URL: {WEAVIATE_URL}")
 
-    weaviate_client = weaviate.Client(
-        url=WEAVIATE_URL,
-        auth_client_secret=weaviate.AuthApiKey(api_key=WEAVIATE_API_KEY),
-         additional_headers={"X-OpenAI-Api-Key": OPENAI_API_KEY}
+    # Opprett Weaviate v4 client
+    weaviate_client = weaviate.connect_to_weaviate_cloud(
+        cluster_url=WEAVIATE_URL,
+        auth_credentials=AuthApiKey(WEAVIATE_API_KEY),
+        headers={"X-OpenAI-Api-Key": OPENAI_API_KEY}
     )
 
-    retriever = weaviate_client.as_retriever(
+    # Opprett embeddings og vector store
+    embeddings = OpenAIEmbeddings(api_key=OPENAI_API_KEY)
+    
+    # Bruk LangChain Weaviate integration
+    vectorstore = WeaviateVectorStore(
+        client=weaviate_client,
+        index_name="Ublox_docs",
+        text_key="content",
+        embedding=embeddings
+    )
+
+    # Opprett retriever
+    retriever = vectorstore.as_retriever(
         search_type="hybrid",
         search_kwargs={"k": 5, "alpha": 0.5}
     )
@@ -72,7 +88,7 @@ try:
     """
     prompt = ChatPromptTemplate.from_template(template)
 
-    model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3)
+    model = ChatOpenAI(model="gpt-3.5-turbo", temperature=0.3, api_key=OPENAI_API_KEY)
 
     rag_chain = (
         {"context": retriever, "question": RunnablePassthrough()}
@@ -80,7 +96,7 @@ try:
         | model
         | StrOutputParser()
     )
-    logger.info("✅ RAG chain initialisert vellykket.")
+    logger.info("✅ RAG chain initialisert vellykket med Weaviate v4.")
 
 except Exception as e:
     init_error = str(e)
