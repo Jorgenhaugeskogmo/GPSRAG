@@ -1,20 +1,21 @@
-# GPSRAG Railway Deployment - Memory optimiert
+# GPSRAG Railway Deployment - Ultra memory optimalized 
 FROM node:18-alpine AS frontend-builder
 
-# Sett memory limits for Node.js
-ENV NODE_OPTIONS="--max_old_space_size=1024"
+# Sett memory limits for Node.js - redusert for Railway
+ENV NODE_OPTIONS="--max_old_space_size=512"
+ENV NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 
-# Installer frontend dependencies med cache optimalisering
-RUN npm ci --no-audit --progress=false --prefer-offline
+# Installer frontend dependencies med aggressive memory optimization
+RUN npm ci --no-audit --progress=false --prefer-offline --omit=dev
 
 COPY frontend/ ./
 
 # Bygg frontend for produksjon med memory optimalisering
 ENV NODE_ENV=production
-RUN npm run build
+RUN npm run build --max_old_space_size=512
 
 # Stage 2: Python Backend 
 FROM python:3.11-slim
@@ -35,24 +36,23 @@ COPY requirements.txt ./
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
-# Kopier backend kode
-COPY api/ ./
+# Kopier API kode
+COPY api/ ./api/
 
-# Kopier frontend build fra forrige stage
+# Kopier built frontend fra forrige stage
 COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
-COPY --from=frontend-builder /app/frontend/package.json ./frontend/package.json
-COPY --from=frontend-builder /app/frontend/next.config.js ./frontend/next.config.js
+COPY --from=frontend-builder /app/frontend/package*.json ./frontend/
 
-# Lag startup script for Railway
-RUN echo '#!/bin/bash\n\
-echo "🚀 Starter GPSRAG på Railway..."\n\
-echo "Starter FastAPI backend på port $PORT"\n\
-exec python -m uvicorn index:app --host 0.0.0.0 --port $PORT\n\
-' > start.sh && chmod +x start.sh
+# Lag frontend static directory for serving
+RUN mkdir -p ./static
 
-# Eksponér Railway port
-EXPOSE $PORT
+# Expose Railway port
+EXPOSE 8080
 
-# Start applikasjonen
-CMD ["./start.sh"] 
+# Health check for Railway
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+  CMD curl -f http://localhost:8080/health || exit 1
+
+# Start kommando - kun backend
+CMD ["python", "-m", "uvicorn", "api.index:app", "--host", "0.0.0.0", "--port", "8080"] 
