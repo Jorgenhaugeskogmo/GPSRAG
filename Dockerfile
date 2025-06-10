@@ -1,36 +1,61 @@
-# GPSRAG Railway Deployment - NO FRONTEND BUILD (ultra minimal memory)
-FROM python:3.11-alpine
+# GPSRAG Railway Deployment - API Gateway Edition
+FROM node:18-alpine AS frontend-builder
 
-# Minimal system dependencies
-RUN apk add --no-cache gcc musl-dev curl
+# Set memory limits for Node.js - optimized for Railway
+ENV NODE_OPTIONS="--max_old_space_size=1024"
+ENV NEXT_TELEMETRY_DISABLED=1
+
+WORKDIR /app/frontend
+COPY frontend/package*.json ./
+
+# Install frontend dependencies
+RUN npm ci --only=production --no-audit --progress=false
+
+COPY frontend/ ./
+
+# Build frontend for production
+ENV NODE_ENV=production
+RUN npm run build
+
+# Stage 2: Python API Gateway
+FROM python:3.11-slim
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
-# Copy minimal requirements
-COPY requirements-minimal.txt requirements.txt
+# Copy backend requirements
+COPY requirements.txt .
 
-# Ultra-minimal pip installation - one by one to minimize memory spikes
-RUN pip install --no-cache-dir --upgrade pip
-RUN pip install --no-cache-dir fastapi==0.104.1
-RUN pip install --no-cache-dir uvicorn==0.24.0  
-RUN pip install --no-cache-dir pydantic==2.8.2
-RUN pip install --no-cache-dir python-multipart==0.0.6
-RUN pip install --no-cache-dir python-dotenv==1.0.0
-RUN pip install --no-cache-dir aiofiles==23.1.0
+# Install Python dependencies (Railway optimized)
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy API code
-COPY api/ ./api/
+# Copy API Gateway code
+COPY services/api-gateway/ ./
 
-# Create minimal index.html for basic web interface (NO React/Next.js)
-RUN mkdir -p ./static
-RUN echo '<!DOCTYPE html><html><head><title>GPSRAG API</title></head><body><h1>GPSRAG API is running</h1><p>Backend API is available at /docs for testing</p></body></html>' > ./static/index.html
+# Copy frontend build from previous stage
+COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
+COPY --from=frontend-builder /app/frontend/public ./frontend/public
+COPY --from=frontend-builder /app/frontend/next.config.js ./frontend/
+COPY --from=frontend-builder /app/frontend/package.json ./frontend/
 
-# Expose port
-EXPOSE 8080
+# Environment variables for Railway
+ENV OPENAI_API_KEY=${OPENAI_API_KEY}
+ENV DATABASE_URL=sqlite:///./gpsrag.db
+ENV ENVIRONMENT=railway
 
-# Health check
-HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=2 \
-  CMD curl -f http://localhost:8080/health || exit 1
+# Railway port configuration (Railway sets PORT automatically)
+ENV PORT=${PORT:-8080}
+EXPOSE ${PORT:-8080}
 
-# Start only backend - no frontend
-CMD ["python", "-m", "uvicorn", "api.index:app", "--host", "0.0.0.0", "--port", "8080"] 
+# Health check for Railway
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
+
+# Start API Gateway with Railway PORT
+CMD uvicorn main:app --host 0.0.0.0 --port ${PORT:-8080} 
