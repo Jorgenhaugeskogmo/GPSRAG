@@ -6,11 +6,11 @@ python-multipart==0.0.6
 python-dotenv==1.0.0
 aiofiles==23.1.0
 
-# RAG Dependencies - MINIMAL og STABIL med NumPy fix
+# RAG Dependencies - STRICT NumPy 1.x for ChromaDB compatibility
+numpy==1.24.3
 openai==1.40.0
 pypdf==4.2.0
-chromadb==0.4.22
-numpy<2.0.0
+chromadb==0.4.15
 tiktoken==0.7.0
 
-# Build timestamp: RAG-ENABLED-NumPy-Fix-2025-06-10 
+# Build timestamp: RAG-ENABLED-NumPy-1.24-2025-06-10 
