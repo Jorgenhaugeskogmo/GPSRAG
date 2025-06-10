@@ -1,15 +1,18 @@
-# GPSRAG Railway Deployment - Backend only med frontend serving
+# GPSRAG Railway Deployment - Memory optimiert
 FROM node:18-alpine AS frontend-builder
+
+# Sett memory limits for Node.js
+ENV NODE_OPTIONS="--max_old_space_size=1024"
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 
 # Installer frontend dependencies med cache optimalisering
-RUN npm ci --no-audit --progress=false
+RUN npm ci --no-audit --progress=false --prefer-offline
 
 COPY frontend/ ./
 
-# Bygg frontend for produksjon
+# Bygg frontend for produksjon med memory optimalisering
 ENV NODE_ENV=production
 RUN npm run build
 
@@ -25,31 +28,31 @@ RUN apt-get update && apt-get install -y \
 
 WORKDIR /app
 
-# Kopier requirements.txt først for bedre caching
-COPY api/requirements.txt ./requirements.txt
+# Kopier requirements.txt først for bedre caching  
+COPY requirements.txt ./
 
 # Installer Python dependencies med minneoptimalisering
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Kopier backend kode
-COPY api/ ./backend/
+COPY api/ ./
 
-# Kopier frontend build for serving fra backend
+# Kopier frontend build fra forrige stage
 COPY --from=frontend-builder /app/frontend/.next ./frontend/.next
 COPY --from=frontend-builder /app/frontend/public ./frontend/public
 COPY --from=frontend-builder /app/frontend/package.json ./frontend/package.json
+COPY --from=frontend-builder /app/frontend/next.config.js ./frontend/next.config.js
 
-# Lag startup script for Railway - kun backend som serverer alt
+# Lag startup script for Railway
 RUN echo '#!/bin/bash\n\
-set -e\n\
-echo "🚀 Starter GPSRAG Fullstack Backend på Railway..."\n\
-echo "Port: $PORT"\n\
-cd /app/backend && python -m uvicorn index:app --host 0.0.0.0 --port $PORT\n\
-' > /app/start.sh && chmod +x /app/start.sh
+echo "🚀 Starter GPSRAG på Railway..."\n\
+echo "Starter FastAPI backend på port $PORT"\n\
+exec python -m uvicorn index:app --host 0.0.0.0 --port $PORT\n\
+' > start.sh && chmod +x start.sh
 
-# Eksponer port
+# Eksponér Railway port
 EXPOSE $PORT
 
-# Start kun backend (som serverer frontend)
-CMD ["/app/start.sh"] 
+# Start applikasjonen
+CMD ["./start.sh"] 
