@@ -32,9 +32,35 @@ WORKDIR /app
 # Kopier requirements.txt først for bedre caching  
 COPY requirements.txt ./
 
-# Installer Python dependencies med minneoptimalisering
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt
+# Memory-optimized pip installation - installer i separate steg
+# Upgrade pip først
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# Installer core dependencies først (minst memory-intensive)
+RUN pip install --no-cache-dir \
+    fastapi==0.104.1 \
+    uvicorn==0.24.0 \
+    pydantic==2.8.2 \
+    python-multipart==0.0.6
+
+# Installer AI dependencies separat
+RUN pip install --no-cache-dir \
+    openai==1.26.0
+
+# Installer Weaviate separat
+RUN pip install --no-cache-dir \
+    weaviate-client==4.15.0
+
+# Installer LangChain dependencies separat
+RUN pip install --no-cache-dir \
+    langchain-core==0.2.43 \
+    langchain-openai==0.1.8
+
+# Installer resterende dependencies
+RUN pip install --no-cache-dir \
+    pypdf==4.2.0 \
+    python-dotenv==1.0.0 \
+    aiofiles==23.1.0
 
 # Kopier API kode
 COPY api/ ./api/
