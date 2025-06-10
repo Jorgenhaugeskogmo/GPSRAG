@@ -35,24 +35,35 @@ class GPSRAGService:
         logger.info("🚀 Initialiserer RAG service...")
         
         # Initialiser ChromaDB (lokal vector database for Railway)
-        self.chroma_client = chromadb.PersistentClient(
-            path="/tmp/chromadb",
-            settings=Settings(
-                allow_reset=True,
-                anonymized_telemetry=False
-            )
-        )
-        
-        # Hent eller opprett collection
         try:
-            self.collection = self.chroma_client.get_collection("gpsrag_documents")
-            logger.info("✅ Koblet til eksisterende ChromaDB collection")
-        except:
-            self.collection = self.chroma_client.create_collection(
-                name="gpsrag_documents",
-                metadata={"description": "GPSRAG dokument chunks med embeddings"}
+            # Opprett ChromaDB directory hvis den ikke eksisterer
+            chromadb_path = "/tmp/chromadb"
+            os.makedirs(chromadb_path, exist_ok=True)
+            
+            self.chroma_client = chromadb.PersistentClient(
+                path=chromadb_path,
+                settings=Settings(
+                    allow_reset=True,
+                    anonymized_telemetry=False
+                )
             )
-            logger.info("✅ Opprettet ny ChromaDB collection")
+            
+            # Hent eller opprett collection
+            try:
+                self.collection = self.chroma_client.get_collection("gpsrag_documents")
+                logger.info("✅ Koblet til eksisterende ChromaDB collection")
+            except:
+                self.collection = self.chroma_client.create_collection(
+                    name="gpsrag_documents",
+                    metadata={"description": "GPSRAG dokument chunks med embeddings"}
+                )
+                logger.info("✅ Opprettet ny ChromaDB collection")
+        
+        except Exception as e:
+            logger.error(f"❌ ChromaDB initialisering feilet: {e}")
+            self.chroma_client = None
+            self.collection = None
+            logger.warning("⚠️ Bruker in-memory fallback for embeddings")
         
         # Tiktoken for token counting
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
@@ -183,13 +194,17 @@ class GPSRAGService:
                 metadatas.append(metadata)
                 documents.append(chunk["text"])
             
-            # Lagre i ChromaDB
-            self.collection.add(
-                ids=chunk_ids,
-                embeddings=embeddings,
-                metadatas=metadatas,
-                documents=documents
-            )
+            # Lagre i ChromaDB hvis tilgjengelig
+            if self.collection is not None:
+                self.collection.add(
+                    ids=chunk_ids,
+                    embeddings=embeddings,
+                    metadatas=metadatas,
+                    documents=documents
+                )
+                logger.info(f"✅ Dokument lagret i ChromaDB: {filename}")
+            else:
+                logger.warning("⚠️ ChromaDB ikke tilgjengelig - dokumenter lagres ikke persistent")
             
             logger.info(f"✅ Dokument prosessert: {filename} → {len(chunks)} chunks lagret")
             
@@ -208,6 +223,10 @@ class GPSRAGService:
     async def search_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Søker i dokumenter med RAG"""
         try:
+            if self.collection is None:
+                logger.warning("⚠️ ChromaDB ikke tilgjengelig - kan ikke søke i dokumenter")
+                return []
+            
             # Lag embedding for query
             query_embeddings = await self.create_embeddings([query])
             query_embedding = query_embeddings[0]
@@ -221,15 +240,16 @@ class GPSRAGService:
             
             # Format resultater
             search_results = []
-            for i in range(len(results["documents"][0])):
-                result = {
-                    "text": results["documents"][0][i],
-                    "metadata": results["metadatas"][0][i],
-                    "relevance_score": 1 - results["distances"][0][i],  # Convert distance to similarity
-                    "filename": results["metadatas"][0][i]["filename"],
-                    "chunk_index": results["metadatas"][0][i]["chunk_index"]
-                }
-                search_results.append(result)
+            if results["documents"] and len(results["documents"][0]) > 0:
+                for i in range(len(results["documents"][0])):
+                    result = {
+                        "text": results["documents"][0][i],
+                        "metadata": results["metadatas"][0][i],
+                        "relevance_score": 1 - results["distances"][0][i],  # Convert distance to similarity
+                        "filename": results["metadatas"][0][i]["filename"],
+                        "chunk_index": results["metadatas"][0][i]["chunk_index"]
+                    }
+                    search_results.append(result)
             
             logger.info(f"✅ Fant {len(search_results)} relevante chunks for query")
             return search_results
@@ -319,5 +339,27 @@ SVAR:"""
                 "context_used": False
             }
 
-# Global RAG service instance
-rag_service = GPSRAGService() 
+# Global RAG service instance - lazy initialization for Railway
+rag_service = None
+
+def get_rag_service():
+    """Lazy initialization av RAG service for Railway deployment"""
+    global rag_service
+    if rag_service is None:
+        try:
+            rag_service = GPSRAGService()
+            logger.info("✅ RAG service initialisert")
+        except Exception as e:
+            logger.error(f"❌ RAG service initialisering feilet: {e}")
+            # Returner en dummy service som feiler gracefully
+            class DummyRAGService:
+                async def process_document(self, *args, **kwargs):
+                    raise Exception(f"RAG service ikke tilgjengelig: {e}")
+                async def generate_rag_response(self, *args, **kwargs):
+                    return {
+                        "response": f"RAG service ikke tilgjengelig: {e}",
+                        "sources": [],
+                        "context_used": False
+                    }
+            rag_service = DummyRAGService()
+    return rag_service 

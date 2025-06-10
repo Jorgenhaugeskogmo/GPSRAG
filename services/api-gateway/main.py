@@ -38,12 +38,12 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Database initialisering feilet: {e}")
     
-    # Initialize RAG service
+    # Initialize RAG service - lazy loading for Railway
     try:
-        from rag_service import rag_service
-        logger.info("🎯 RAG Service initialisert og klar!")
+        from rag_service import get_rag_service
+        logger.info("🎯 RAG Service modul lastet og klar!")
     except Exception as e:
-        logger.warning(f"⚠️ RAG Service initialisering feilet: {e}")
+        logger.warning(f"⚠️ RAG Service modul laster feilet: {e}")
     
     logger.info("🌐 Railway deployment aktiv med RAG")
     
@@ -152,7 +152,8 @@ async def chat_endpoint(request: dict):
     """Chat endpoint med full RAG integrasjon"""
     try:
         # Import RAG service
-        from rag_service import rag_service
+        from rag_service import get_rag_service
+        rag_service = get_rag_service()
         
         message = request.get("message", "")
         session_id = request.get("session_id", "default")
@@ -200,7 +201,8 @@ async def upload_file(file: UploadFile = File(...)):
     """Upload og prosesser dokumenter med full RAG pipeline"""
     try:
         # Import RAG service
-        from rag_service import rag_service
+        from rag_service import get_rag_service
+        rag_service = get_rag_service()
         
         # Sjekk filtype
         if not file.filename.lower().endswith('.pdf'):
