@@ -3,13 +3,15 @@ GPSRAG API Gateway - Railway Deployment
 Hovedapplikasjon som håndterer alle API-kall og serverer frontend
 """
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 import os
+import tempfile
+import shutil
 from pathlib import Path
 
 # Configure logging
@@ -112,10 +114,85 @@ async def api_root():
             "health": "/health",
             "api_health": "/api/health",
             "chat": "/api/chat/",
+            "upload": "/api/upload",
         }
     }
 
-# Fallback chat endpoint for testing
+# Chat endpoint with proper request handling
+@app.post("/api/chat/")
+async def chat_endpoint(request: dict):
+    """Chat endpoint som håndterer meldinger"""
+    try:
+        message = request.get("message", "")
+        session_id = request.get("session_id", "default")
+        
+        if not message:
+            raise HTTPException(status_code=400, detail="Melding er påkrevet")
+        
+        # For nå, returner en mock respons (senere koble til OpenAI/RAG)
+        response_text = f"Du spurte: '{message}'. Dette er en test-respons fra GPSRAG på Railway. RAG-integrasjon kommer snart!"
+        
+        return {
+            "response": response_text,
+            "session_id": session_id,
+            "status": "success",
+            "sources": []  # Skal fylles når RAG er koblet til
+        }
+    except Exception as e:
+        logger.error(f"Chat error: {e}")
+        raise HTTPException(status_code=500, detail=f"Chat feil: {str(e)}")
+
+# File upload endpoint
+@app.post("/api/upload")
+async def upload_file(file: UploadFile = File(...)):
+    """Upload og prosesser dokumenter"""
+    try:
+        # Sjekk filtype
+        if not file.filename.lower().endswith('.pdf'):
+            raise HTTPException(status_code=400, detail="Kun PDF-filer er støttet")
+        
+        # Sjekk filstørrelse (maks 10MB)
+        file_size = 0
+        content = await file.read()
+        file_size = len(content)
+        
+        if file_size > 10 * 1024 * 1024:  # 10MB
+            raise HTTPException(status_code=400, detail="Fil er for stor (maks 10MB)")
+        
+        # Reset file pointer
+        await file.seek(0)
+        
+        # Opprett temp mappe for Railway
+        upload_dir = Path("/tmp/uploads")
+        upload_dir.mkdir(exist_ok=True)
+        
+        # Lagre filen midlertidig
+        file_path = upload_dir / file.filename
+        with open(file_path, "wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+        
+        logger.info(f"✅ Fil lagret: {file.filename} ({file_size} bytes)")
+        
+        # TODO: Implementer RAG prosessering her
+        # - Ekstraher tekst fra PDF
+        # - Lag embeddings
+        # - Lagre i vektor database
+        
+        return {
+            "status": "success",
+            "message": f"Fil '{file.filename}' lastet opp og prosessert",
+            "filename": file.filename,
+            "size": file_size,
+            "processed": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Upload error: {e}")
+        raise HTTPException(status_code=500, detail=f"Upload feil: {str(e)}")
+
+# Fallback chat endpoint for testing (backup)
 @app.post("/api/chat")
 async def chat_fallback():
     """Fallback chat endpoint for Railway testing"""
