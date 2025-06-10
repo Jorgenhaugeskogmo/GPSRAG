@@ -77,6 +77,28 @@ async def api_health_check():
     """API health check"""
     return {"status": "healthy", "service": "GPSRAG API Gateway", "environment": "Railway"}
 
+# Try to mount Next.js static assets
+try:
+    next_static_path = Path("/app/frontend/.next/static")
+    if next_static_path.exists():
+        app.mount("/_next/static", StaticFiles(directory=str(next_static_path)), name="next-static")
+        logger.info(f"✅ Next.js static assets mounted: {next_static_path}")
+    
+    public_path = Path("/app/frontend/public")
+    if public_path.exists():
+        app.mount("/static", StaticFiles(directory=str(public_path)), name="public")
+        logger.info(f"✅ Public assets mounted: {public_path}")
+except Exception as e:
+    logger.warning(f"⚠️ Static files mounting feilet: {e}")
+
+# Try to import and mount chat router safely
+try:
+    from src.routers import chat
+    app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+    logger.info("✅ Chat router loaded")
+except ImportError as e:
+    logger.warning(f"⚠️ Chat router ikke tilgjengelig: {e}")
+
 @app.get("/api")
 async def api_root():
     """API root endepunkt"""
@@ -89,6 +111,7 @@ async def api_root():
         "endpoints": {
             "health": "/health",
             "api_health": "/api/health",
+            "chat": "/api/chat/",
         }
     }
 
@@ -102,10 +125,29 @@ async def chat_fallback():
         "timestamp": "2025-06-10"
     }
 
-# Root route - serve frontend
+# Root route - serve Next.js frontend
 @app.get("/")
 async def root():
-    """Root endepunkt - serve frontend"""
+    """Serve Next.js frontend eller fallback"""
+    # Try to serve actual Next.js build
+    try:
+        html_files = [
+            Path("/app/frontend/.next/server/pages/index.html"),
+            Path("/app/frontend/.next/static/index.html"),
+            Path("/app/frontend/public/index.html"),
+        ]
+        
+        for html_file in html_files:
+            if html_file.exists():
+                logger.info(f"Serving Next.js from: {html_file}")
+                return FileResponse(str(html_file))
+        
+        # If no Next.js files found, serve fallback
+        logger.warning("Next.js files not found, serving fallback")
+    except Exception as e:
+        logger.warning(f"Frontend serving error: {e}")
+    
+    # Fallback HTML with better functionality
     return HTMLResponse(content="""
     <!DOCTYPE html>
     <html>
@@ -156,6 +198,30 @@ async def root():
     </body>
     </html>
     """)
+
+# Catch-all route for frontend routes
+@app.get("/{path:path}")
+async def serve_frontend_routes(path: str):
+    """Serve frontend for alle paths som ikke er API"""
+    # Skip API routes
+    if path.startswith("api/") or path in ["docs", "redoc", "openapi.json", "health"]:
+        raise HTTPException(status_code=404, detail="Not found")
+    
+    # Try to serve Next.js index for all frontend routes
+    try:
+        html_files = [
+            Path("/app/frontend/.next/server/pages/index.html"),
+            Path("/app/frontend/.next/static/index.html"),
+        ]
+        
+        for html_file in html_files:
+            if html_file.exists():
+                return FileResponse(str(html_file))
+    except Exception as e:
+        logger.warning(f"Frontend route serving error: {e}")
+    
+    # Fallback - redirect to root
+    raise HTTPException(status_code=404, detail=f"Page not found: {path}")
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request, exc):
