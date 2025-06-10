@@ -2,14 +2,14 @@
 FROM node:18-alpine AS frontend-builder
 
 # Set memory limits for Node.js - optimized for Railway
-ENV NODE_OPTIONS="--max_old_space_size=1024"
+ENV NODE_OPTIONS="--max_old_space_size=1536"
 ENV NEXT_TELEMETRY_DISABLED=1
 
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
 
-# Install frontend dependencies
-RUN npm ci --only=production --no-audit --progress=false
+# Install frontend dependencies (include dev dependencies for Tailwind plugins)
+RUN npm ci --no-audit --progress=false
 
 COPY frontend/ ./
 
