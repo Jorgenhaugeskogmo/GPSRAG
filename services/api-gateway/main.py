@@ -24,6 +24,13 @@ async def lifespan(app: FastAPI):
     # Startup
     logger.info("🚀 Starter GPSRAG API Gateway på Railway...")
     
+    # Sjekk OpenAI API nøkkel
+    openai_key = os.getenv("OPENAI_API_KEY")
+    if openai_key:
+        logger.info("✅ OpenAI API nøkkel funnet - RAG aktivert")
+    else:
+        logger.warning("⚠️ OPENAI_API_KEY mangler - sett den i Railway environment variables")
+    
     # Initialize database tables (SQLite for Railway)
     try:
         # Simple SQLite setup for Railway
@@ -31,7 +38,14 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         logger.warning(f"⚠️ Database initialisering feilet: {e}")
     
-    logger.info("🌐 Railway deployment aktiv")
+    # Initialize RAG service
+    try:
+        from rag_service import rag_service
+        logger.info("🎯 RAG Service initialisert og klar!")
+    except Exception as e:
+        logger.warning(f"⚠️ RAG Service initialisering feilet: {e}")
+    
+    logger.info("🌐 Railway deployment aktiv med RAG")
     
     yield
     
@@ -118,41 +132,67 @@ async def api_root():
         }
     }
 
-# Chat endpoint with proper request handling
+# Chat endpoint with RAG integration
 @app.post("/api/chat/")
 async def chat_endpoint(request: dict):
-    """Chat endpoint som håndterer meldinger"""
+    """Chat endpoint med full RAG integrasjon"""
     try:
+        # Import RAG service
+        from rag_service import rag_service
+        
         message = request.get("message", "")
         session_id = request.get("session_id", "default")
         
         if not message:
             raise HTTPException(status_code=400, detail="Melding er påkrevet")
         
-        # For nå, returner en mock respons (senere koble til OpenAI/RAG)
-        response_text = f"Du spurte: '{message}'. Dette er en test-respons fra GPSRAG på Railway. RAG-integrasjon kommer snart!"
+        logger.info(f"🚀 RAG Chat query: {message}")
         
-        return {
-            "response": response_text,
-            "session_id": session_id,
-            "status": "success",
-            "sources": []  # Skal fylles når RAG er koblet til
-        }
+        # 🎯 FULL RAG PIPELINE AKTIVERT!
+        try:
+            rag_result = await rag_service.generate_rag_response(message)
+            
+            return {
+                "response": rag_result["response"],
+                "session_id": session_id,
+                "status": "success",
+                "sources": rag_result["sources"],
+                "context_used": rag_result["context_used"],
+                "search_results_count": rag_result.get("search_results_count", 0)
+            }
+            
+        except Exception as rag_error:
+            logger.error(f"❌ RAG chat feil: {rag_error}")
+            
+            # Fallback til enkel respons
+            fallback_response = f"Beklager, RAG-systemet er midlertidig utilgjengelig. Feil: {str(rag_error)[:100]}..."
+            
+            return {
+                "response": fallback_response,
+                "session_id": session_id,
+                "status": "fallback",
+                "sources": [],
+                "context_used": False,
+                "error": str(rag_error)
+            }
+            
     except Exception as e:
         logger.error(f"Chat error: {e}")
         raise HTTPException(status_code=500, detail=f"Chat feil: {str(e)}")
 
-# File upload endpoint
+# File upload endpoint with RAG processing
 @app.post("/api/upload")
 async def upload_file(file: UploadFile = File(...)):
-    """Upload og prosesser dokumenter"""
+    """Upload og prosesser dokumenter med full RAG pipeline"""
     try:
+        # Import RAG service
+        from rag_service import rag_service
+        
         # Sjekk filtype
         if not file.filename.lower().endswith('.pdf'):
             raise HTTPException(status_code=400, detail="Kun PDF-filer er støttet")
         
         # Sjekk filstørrelse (maks 10MB)
-        file_size = 0
         content = await file.read()
         file_size = len(content)
         
@@ -173,18 +213,37 @@ async def upload_file(file: UploadFile = File(...)):
         
         logger.info(f"✅ Fil lagret: {file.filename} ({file_size} bytes)")
         
-        # TODO: Implementer RAG prosessering her
-        # - Ekstraher tekst fra PDF
-        # - Lag embeddings
-        # - Lagre i vektor database
-        
-        return {
-            "status": "success",
-            "message": f"Fil '{file.filename}' lastet opp og prosessert",
-            "filename": file.filename,
-            "size": file_size,
-            "processed": True
-        }
+        # 🚀 RAG PROSESSERING AKTIVERT!
+        try:
+            rag_result = await rag_service.process_document(str(file_path), file.filename)
+            
+            logger.info(f"🎉 RAG prosessering fullført: {rag_result}")
+            
+            return {
+                "status": "success",
+                "message": f"Fil '{file.filename}' lastet opp og prosessert med RAG",
+                "filename": file.filename,
+                "size": file_size,
+                "processed": True,
+                "rag_processing": {
+                    "doc_id": rag_result["doc_id"],
+                    "chunks_count": rag_result["chunks_count"],
+                    "total_tokens": rag_result["total_tokens"],
+                    "text_length": rag_result["text_length"]
+                }
+            }
+            
+        except Exception as rag_error:
+            logger.error(f"❌ RAG prosessering feilet: {rag_error}")
+            # Returner suksess for fil upload, men noter RAG feil
+            return {
+                "status": "partial_success",
+                "message": f"Fil '{file.filename}' lastet opp, men RAG prosessering feilet",
+                "filename": file.filename,
+                "size": file_size,
+                "processed": False,
+                "error": str(rag_error)
+            }
         
     except HTTPException:
         raise
