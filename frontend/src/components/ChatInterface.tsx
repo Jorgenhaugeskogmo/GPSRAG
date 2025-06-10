@@ -1,25 +1,14 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { PaperAirplaneIcon, UserIcon, CpuChipIcon, DocumentIcon } from '@heroicons/react/24/outline';
-import ReactMarkdown from 'react-markdown';
 
 interface Message {
   id: string;
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-  sources?: DocumentSource[];
-}
-
-interface DocumentSource {
-  filename: string;
-  page?: number;
-  relevance_score: number;
-  excerpt: string;
+  text: string;
+  user: boolean;
 }
 
 export const ChatInterface: React.FC = () => {
-  const [messages, setMessages] = useState<{ id: string; text: string; user: boolean }[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const endRef = useRef<HTMLDivElement>(null);
 
@@ -28,7 +17,8 @@ export const ChatInterface: React.FC = () => {
   }, [messages]);
 
   const send = async (text: string, byUser = true) => {
-    setMessages((m) => [...m, { id: `${Date.now()}`, text, user: byUser }]);
+    const userMessage: Message = { id: `${Date.now()}`, text, user: byUser };
+    setMessages((m) => [...m, userMessage]);
     setInput('');
     
     // API call to backend
@@ -47,21 +37,26 @@ export const ChatInterface: React.FC = () => {
 
         if (response.ok) {
           const data = await response.json();
-          setMessages((m) => [...m, { 
+          console.log('Chat response data:', data); // Debug logging
+          
+          const assistantMessage: Message = { 
             id: `${Date.now() + 1}`, 
             text: data.response || 'Beklager, jeg kunne ikke prosessere forespørselen din.', 
             user: false 
-          }]);
+          };
+          setMessages((m) => [...m, assistantMessage]);
         } else {
-          throw new Error('Failed to get response');
+          console.error('Response not ok:', response.status, response.statusText);
+          throw new Error(`HTTP ${response.status}: ${response.statusText}`);
         }
       } catch (error) {
         console.error('Chat error:', error);
-        setMessages((m) => [...m, { 
+        const errorMessage: Message = { 
           id: `${Date.now() + 1}`, 
           text: 'Beklager, det oppstod en feil. Sørg for at backend-tjenestene kjører og prøv igjen.', 
           user: false 
-        }]);
+        };
+        setMessages((m) => [...m, errorMessage]);
       }
     }
   };
