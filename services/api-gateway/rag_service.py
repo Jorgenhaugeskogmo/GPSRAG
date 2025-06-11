@@ -36,6 +36,7 @@ class GPSRAGService:
 
         self.collection = None
         self.initialized = False
+        self.in_memory_docs = []
         
         try:
             # Bruk PersistentClient for å lagre data på disk i Railway
