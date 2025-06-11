@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 
 class GPSRAGService:
     def __init__(self):
-        """Initialiserer RAG service med robust feilhåndtering"""
+        """Initialiserer RAG service med robust feilhåndtering og persistent lagring."""
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_api_key:
             logger.error("❌ OPENAI_API_KEY mangler - RAG vil ikke fungere fullt ut.")
@@ -35,20 +35,29 @@ class GPSRAGService:
         logger.info("✅ Tokenizer initialisert.")
 
         self.collection = None
-        self.in_memory_docs = []
         self.initialized = False
         
         try:
-            import chromadb
-            self.client = chromadb.Client()
-            self.collection = self.client.create_collection(
-                name="documents",
+            # Bruk PersistentClient for å lagre data på disk i Railway
+            db_path = "/tmp/chromadb"
+            os.makedirs(db_path, exist_ok=True)
+            logger.info(f"ChromaDB path: {db_path}")
+
+            self.client = chromadb.PersistentClient(path=db_path)
+            
+            # Bruk get_or_create for å unngå feil ved re-initialisering
+            self.collection = self.client.get_or_create_collection(
+                name="gpsrag_documents_v2",
                 metadata={"hnsw:space": "cosine"}
             )
             self.initialized = True
-            logger.info("✅ ChromaDB initialisert vellykket")
+            logger.info(f"✅ ChromaDB initialisert persistent. Collection: {self.collection.name}")
         except Exception as e:
-            logger.warning(f"⚠️ ChromaDB initialisering feilet, bruker in-memory fallback: {e}")
+            logger.error(f"❌ ChromaDB (Persistent) initialisering feilet: {e}", exc_info=True)
+            # Fallback til in-memory, selv om det er mindre ideelt
+            logger.warning("⚠️ Fallback til in-memory storage.")
+            self.client = chromadb.Client()
+            self.collection = self.client.get_or_create_collection(name="gpsrag_fallback")
             self.in_memory_docs = []
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
