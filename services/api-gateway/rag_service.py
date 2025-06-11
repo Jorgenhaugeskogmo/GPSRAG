@@ -109,28 +109,43 @@ class GPSRAGService:
         return chunks
 
     async def create_embeddings(self, texts: List[str]) -> List[List[float]]:
-        """Lager embeddings med OpenAI v1.40.0 moderne API"""
+        """Lager embeddings ved å kalle OpenAI API direkte med httpx for å unngå bibliotek-konflikter."""
         try:
-            from openai import OpenAI
+            import httpx
             
-            # Moderne klient - ENKEL versjon
-            client = OpenAI(api_key=self.openai_api_key)
+            headers = {
+                "Authorization": f"Bearer {self.openai_api_key}",
+                "Content-Type": "application/json"
+            }
             
-            logger.info(f"🔄 Lager embeddings for {len(texts)} tekstblokker...")
+            json_data = {
+                "input": texts,
+                "model": "text-embedding-ada-002"
+            }
             
-            response = client.embeddings.create(
-                input=texts,
-                model="text-embedding-ada-002"
-            )
+            logger.info(f"🔄 Kaller OpenAI Embeddings API direkte for {len(texts)} tekstblokker...")
             
-            embeddings = [item.embedding for item in response.data]
-            logger.info(f"✅ Lagde {len(embeddings)} embeddings")
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/embeddings",
+                    headers=headers,
+                    json=json_data,
+                    timeout=30.0
+                )
+            
+            response.raise_for_status() # Sjekker for HTTP-feil (4xx, 5xx)
+            
+            response_data = response.json()
+            embeddings = [item['embedding'] for item in response_data['data']]
+            
+            logger.info(f"✅ Lagde {len(embeddings)} embeddings via direkte API-kall")
             return embeddings
             
+        except httpx.HTTPStatusError as e:
+            logger.error(f"❌ HTTP-feil ved direkte kall til OpenAI: {e.response.status_code} - {e.response.text}")
+            raise Exception(f"OpenAI API-feil: {e.response.text}")
         except Exception as e:
-            logger.error(f"❌ Embedding feil: {e}")
-            import traceback
-            logger.error(f"📊 Embedding traceback: {traceback.format_exc()}")
+            logger.error(f"❌ Embedding feil (direkte kall): {e}", exc_info=True)
             raise Exception(f"Kunne ikke lage embeddings: {str(e)}")
 
     async def process_document(self, file_path: str, filename: str) -> Dict[str, Any]:
