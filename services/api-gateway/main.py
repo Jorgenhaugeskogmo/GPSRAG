@@ -6,7 +6,7 @@ Hovedapplikasjon som håndterer alle API-kall og serverer frontend
 # CRITICAL: Apply NumPy compatibility BEFORE any other imports
 import numpy_compat
 
-from fastapi import FastAPI, HTTPException, UploadFile, File, Form
+from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +17,7 @@ import tempfile
 import shutil
 from pathlib import Path
 from pydantic import BaseModel
+from rag_service import GPSRAGService # Direkte import
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -44,17 +45,21 @@ async def lifespan(app: FastAPI):
     
     # Initialize RAG service - lazy loading for Railway
     try:
-        from rag_service import get_rag_service
         logger.info("🎯 RAG Service modul lastet og klar!")
     except Exception as e:
         logger.warning(f"⚠️ RAG Service modul laster feilet: {e}")
     
     logger.info("🌐 Railway deployment aktiv med RAG")
     
+    # Opprett ÉN enkelt instans av RAG-tjenesten
+    app.state.rag_service = GPSRAGService()
+    logger.info("✅ Singleton RAG service instans opprettet og lagret på app.state.")
+    
     yield
     
     # Shutdown
     logger.info("🔄 Stopper GPSRAG API Gateway...")
+    app.state.rag_service = None # Rydd opp
 
 # Create FastAPI app
 app = FastAPI(
@@ -155,13 +160,12 @@ async def api_root():
         }
     }
 
-# Chat endpoint with RAG integration - MOVED HERE FOR SIMPLICITY
+# Chat endpoint - henter nå RAG-tjenesten fra app.state
 @app.post("/api/chat/")
-async def chat_endpoint(chat_request: ChatRequest):
-    """Chat endpoint med full RAG integrasjon, nå direkte i main.py"""
+async def chat_endpoint(request: Request, chat_request: ChatRequest):
+    """Chat endpoint med full RAG integrasjon, bruker nå shared service instance"""
     try:
-        from rag_service import get_rag_service
-        rag_service = get_rag_service()
+        rag_service = request.app.state.rag_service
         
         logger.info(f"🚀 RAG Chat query mottatt: {chat_request.message}")
         
@@ -185,14 +189,12 @@ async def chat_endpoint(chat_request: ChatRequest):
             detail=f"Det oppstod en intern feil i chat-tjenesten: {str(e)}"
         )
 
-# File upload endpoint with RAG processing
+# File upload endpoint - henter nå RAG-tjenesten fra app.state
 @app.post("/api/upload")
-async def upload_file(file: UploadFile = File(...)):
-    """Upload og prosesser dokumenter med full RAG pipeline"""
+async def upload_file(request: Request, file: UploadFile = File(...)):
+    """Upload og prosesser dokumenter, bruker nå shared service instance"""
     try:
-        # Import RAG service
-        from rag_service import get_rag_service
-        rag_service = get_rag_service()
+        rag_service = request.app.state.rag_service
         
         # Sjekk filtype
         if not file.filename.lower().endswith('.pdf'):

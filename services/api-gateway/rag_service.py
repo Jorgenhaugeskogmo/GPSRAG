@@ -19,47 +19,32 @@ import openai
 from pypdf import PdfReader
 import numpy as np
 import chromadb
-from chromadb.config import Settings
+# from chromadb.config import Settings # Ikke lenger nødvendig
 import tiktoken
 
 logger = logging.getLogger(__name__)
 
 class GPSRAGService:
     def __init__(self):
-        """Initialiserer RAG service med robust feilhåndtering og persistent lagring."""
+        """
+        Initialiserer RAG service med en in-memory database.
+        Denne instansen vil bli delt på tvers av hele applikasjonen.
+        """
         self.openai_api_key = os.getenv("OPENAI_API_KEY")
         if not self.openai_api_key:
-            logger.error("❌ OPENAI_API_KEY mangler - RAG vil ikke fungere fullt ut.")
+            logger.error("❌ OPENAI_API_KEY mangler.")
         
         self.tokenizer = tiktoken.get_encoding("cl100k_base")
-        logger.info("✅ Tokenizer initialisert.")
-
-        self.collection = None
-        self.initialized = False
-        self.in_memory_docs = []
         
-        try:
-            # Bruk PersistentClient for å lagre data på disk i Railway
-            db_path = "/tmp/chromadb"
-            os.makedirs(db_path, exist_ok=True)
-            logger.info(f"ChromaDB path: {db_path}")
-
-            self.client = chromadb.PersistentClient(path=db_path)
-            
-            # Bruk get_or_create for å unngå feil ved re-initialisering
-            self.collection = self.client.get_or_create_collection(
-                name="gpsrag_documents_v2",
-                metadata={"hnsw:space": "cosine"}
-            )
-            self.initialized = True
-            logger.info(f"✅ ChromaDB initialisert persistent. Collection: {self.collection.name}")
-        except Exception as e:
-            logger.error(f"❌ ChromaDB (Persistent) initialisering feilet: {e}", exc_info=True)
-            # Fallback til in-memory, selv om det er mindre ideelt
-            logger.warning("⚠️ Fallback til in-memory storage.")
-            self.client = chromadb.Client()
-            self.collection = self.client.get_or_create_collection(name="gpsrag_fallback")
-            self.in_memory_docs = []
+        # Enkel in-memory client
+        self.client = chromadb.Client()
+        self.collection = self.client.get_or_create_collection(
+            name="gpsrag_shared_in_memory",
+            metadata={"hnsw:space": "cosine"}
+        )
+        self.initialized = True
+        logger.info(f"✅ In-memory RAG Service initialisert med collection: {self.collection.name}")
+        # self.in_memory_docs er ikke lenger nødvendig, Chroma håndterer det.
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
         """Ekstraherer tekst fra PDF"""
@@ -402,34 +387,14 @@ SVAR:"""
             }
             
         except Exception as e:
-            logger.error(f"❌ RAG respons feil: {e}")
+            logger.error(f"❌ RAG respons feil: {e}", exc_info=True)
             return {
                 "response": f"Beklager, det oppstod en teknisk feil under prosessering: {str(e)}",
                 "sources": [],
                 "context_used": False
             }
 
-# Global RAG service instance - lazy initialization for Railway
-rag_service = None
-
-def get_rag_service():
-    """Lazy initialization av RAG service for Railway deployment"""
-    global rag_service
-    if rag_service is None:
-        try:
-            rag_service = GPSRAGService()
-            logger.info("✅ RAG service initialisert")
-        except Exception as e:
-            logger.error(f"❌ RAG service initialisering feilet: {e}")
-            # Returner en dummy service som feiler gracefully
-            class DummyRAGService:
-                async def process_document(self, *args, **kwargs):
-                    raise Exception(f"RAG service ikke tilgjengelig: {e}")
-                async def generate_rag_response(self, *args, **kwargs):
-                    return {
-                        "response": f"RAG service ikke tilgjengelig: {e}",
-                        "sources": [],
-                        "context_used": False
-                    }
-            rag_service = DummyRAGService()
-    return rag_service 
+# Global RAG service er ikke lenger nødvendig, den håndteres av appens livssyklus
+# rag_service = None
+# def get_rag_service():
+# ... (hele funksjonen kan slettes) 
