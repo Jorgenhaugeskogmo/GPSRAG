@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 class GPSRAGService:
     def __init__(self):
         """Initialiserer RAG service med robust feilhåndtering"""
+        self.openai_api_key = os.getenv("OPENAI_API_KEY")
+        if not self.openai_api_key:
+            logger.error("❌ OPENAI_API_KEY mangler - RAG vil ikke fungere fullt ut.")
+        
+        self.tokenizer = tiktoken.get_encoding("cl100k_base")
+        logger.info("✅ Tokenizer initialisert.")
+
         self.collection = None
         self.in_memory_docs = []
         self.initialized = False
