@@ -271,82 +271,73 @@ class GPSRAGService:
             return []
 
     async def generate_rag_response(self, query: str, max_tokens: int = 500) -> Dict[str, Any]:
-        """Generer RAG respons med OpenAI"""
+        """Generer RAG respons ved å kalle OpenAI Chat API direkte med httpx."""
         try:
-            # 1. Søk relevante dokumenter
+            # 1. Søk relevante dokumenter (dette fungerer allerede)
             search_results = await self.search_documents(query, top_k=3)
             
             if not search_results:
                 return {
-                    "response": "Beklager, jeg fant ingen relevante dokumenter for spørsmålet ditt. Last opp noen PDF-er først!",
+                    "response": "Beklager, jeg fant ingen relevante dokumenter for spørsmålet ditt.",
                     "sources": [],
                     "context_used": False
                 }
             
             # 2. Bygg context fra søkeresultater
-            context_parts = []
-            sources = []
-            
-            for result in search_results:
-                context_parts.append(f"Fra {result['filename']} (relevans: {result['relevance_score']:.2f}):\n{result['text']}\n")
-                sources.append({
-                    "filename": result["filename"],
-                    "relevance_score": result["relevance_score"],
-                    "excerpt": result["text"][:200] + "..." if len(result["text"]) > 200 else result["text"]
-                })
-            
-            context = "\n".join(context_parts)
+            context = "\n".join([f"Fra {r['filename']}:\n{r['text']}" for r in search_results])
+            sources = [{"filename": r["filename"], "excerpt": r["text"][:150]} for r in search_results]
             
             # 3. Lag prompt
-            prompt = f"""Du er en AI-assistent som spesialiserer seg på GPS-teknologi og u-blox moduler. Bruk kun informasjonen fra de oppgitte dokumentene til å svare på spørsmålet.
-
-KONTEKST FRA DOKUMENTER:
+            prompt = f"""Du er en AI-assistent for GPS-teknologi. Svar på spørsmålet kun basert på følgende kontekst.
+            
+KONTEKST:
 {context}
 
 SPØRSMÅL: {query}
 
-INSTRUKSJONER:
-- Svar kun basert på informasjonen i dokumentene over
-- Hvis informasjonen ikke finnes i dokumentene, si det tydelig
-- Vær spesifikk og teknisk korrekt
-- Referer til relevante dokumenter når mulig
-- Svar på norsk
-
 SVAR:"""
 
-            # 4. Kall OpenAI
-            from openai import OpenAI
+            # 4. Kall OpenAI Chat API direkte
+            import httpx
             
-            # Moderne klient - ENKEL versjon
-            client = OpenAI(api_key=self.openai_api_key)
+            headers = {
+                "Authorization": f"Bearer {self.openai_api_key}",
+                "Content-Type": "application/json"
+            }
             
-            logger.info(f"🤖 Sender query til OpenAI med {len(context)} tegn context...")
+            json_data = {
+                "model": "gpt-3.5-turbo",
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": max_tokens,
+                "temperature": 0.3
+            }
             
-            response = client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=[
-                    {"role": "system", "content": "Du er en ekspert på GPS-teknologi og u-blox moduler. Svar alltid på norsk og bruk kun informasjonen fra de oppgitte dokumentene."},
-                    {"role": "user", "content": prompt}
-                ],
-                max_tokens=max_tokens,
-                temperature=0.3
-            )
+            logger.info("🤖 Kaller OpenAI Chat API direkte...")
             
-            ai_response = response.choices[0].message.content.strip()
+            async with httpx.AsyncClient() as client:
+                response = await client.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=json_data,
+                    timeout=45.0
+                )
             
-            logger.info(f"✅ RAG respons generert ({len(ai_response)} tegn)")
+            response.raise_for_status()
+            
+            ai_response = response.json()["choices"][0]["message"]["content"].strip()
+            
+            logger.info("✅ RAG respons generert via direkte API-kall.")
             
             return {
                 "response": ai_response,
                 "sources": sources,
-                "context_used": True,
-                "search_results_count": len(search_results)
+                "context_used": True
             }
             
         except Exception as e:
-            logger.error(f"❌ RAG respons feil: {e}", exc_info=True)
+            logger.error(f"❌ RAG respons feil (direkte kall): {e}", exc_info=True)
             return {
-                "response": f"Beklager, det oppstod en teknisk feil under prosessering: {str(e)}",
+                "response": f"Beklager, en teknisk feil oppstod: {str(e)}",
                 "sources": [],
                 "context_used": False
             }
