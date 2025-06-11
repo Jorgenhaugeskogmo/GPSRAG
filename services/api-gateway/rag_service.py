@@ -11,7 +11,10 @@ import uuid
 import re
 import tempfile
 
-# RAG Dependencies
+# CRITICAL: Apply NumPy compatibility patches FIRST
+import numpy_compat  # This MUST be first
+
+# RAG Dependencies  
 import openai
 from pypdf import PdfReader
 import numpy as np
@@ -23,65 +26,22 @@ logger = logging.getLogger(__name__)
 
 class GPSRAGService:
     def __init__(self):
-        """Initialiserer RAG service"""
-        self.openai_api_key = os.getenv("OPENAI_API_KEY")
-        if not self.openai_api_key:
-            logger.error("❌ OPENAI_API_KEY mangler - RAG vil ikke fungere")
-            logger.error("🔧 Sett OPENAI_API_KEY i Railway environment variables")
-        else:
-            logger.info(f"✅ OpenAI API nøkkel funnet (starter med: {self.openai_api_key[:8]}...)")
-            
-        # OpenAI klient vil bli initialisert når behov
-        logger.info("🚀 Initialiserer RAG service...")
+        """Initialiserer RAG service med robust feilhåndtering"""
+        self.collection = None
+        self.in_memory_docs = []
+        self.initialized = False
         
-        # Initialiser ChromaDB (lokal vector database for Railway) med NumPy fix
         try:
-            # FIRST: Fix NumPy 2.0 compatibility issue
-            import numpy as np
-            if not hasattr(np, 'float_'):
-                # If we're on NumPy 2.0+, add the missing float_ alias
-                np.float_ = np.float64
-                logger.info("✅ NumPy 2.0 compatibility fix applied")
-            
-            # Opprett ChromaDB directory hvis den ikke eksisterer
-            chromadb_path = "/tmp/chromadb"
-            os.makedirs(chromadb_path, exist_ok=True)
-            
-            self.chroma_client = chromadb.PersistentClient(
-                path=chromadb_path,
-                settings=Settings(
-                    allow_reset=True,
-                    anonymized_telemetry=False
-                )
+            import chromadb
+            self.client = chromadb.Client()
+            self.collection = self.client.create_collection(
+                name="documents",
+                metadata={"hnsw:space": "cosine"}
             )
-            
-            # Hent eller opprett collection
-            try:
-                self.collection = self.chroma_client.get_collection("gpsrag_documents")
-                logger.info("✅ Koblet til eksisterende ChromaDB collection")
-            except:
-                self.collection = self.chroma_client.create_collection(
-                    name="gpsrag_documents",
-                    metadata={"description": "GPSRAG dokument chunks med embeddings"}
-                )
-                logger.info("✅ Opprettet ny ChromaDB collection")
-        
+            self.initialized = True
+            logger.info("✅ ChromaDB initialisert vellykket")
         except Exception as e:
-            logger.error(f"❌ ChromaDB initialisering feilet: {e}")
-            import traceback
-            logger.error(f"📊 Full ChromaDB error: {traceback.format_exc()}")
-            
-            # FALLBACK: In-memory storage for Railway
-            self.chroma_client = None
-            self.collection = None
-            self.in_memory_docs = []  # Fallback storage
-            logger.warning("⚠️ Bruker in-memory fallback for embeddings")
-        
-        # Tiktoken for token counting
-        self.tokenizer = tiktoken.get_encoding("cl100k_base")
-        
-        # Initialize in-memory fallback if not already done
-        if not hasattr(self, 'in_memory_docs'):
+            logger.warning(f"⚠️ ChromaDB initialisering feilet, bruker in-memory fallback: {e}")
             self.in_memory_docs = []
 
     def extract_text_from_pdf(self, pdf_path: str) -> str:
@@ -178,61 +138,48 @@ class GPSRAGService:
             text = self.extract_text_from_pdf(file_path)
             
             if not text.strip():
-                raise Exception("PDF inneholder ingen tekst")
+                logger.warning(f"⚠️ Ingen tekst funnet i PDF: {filename}")
+                return {
+                    "status": "error",
+                    "message": "Ingen tekst funnet i dokumentet",
+                    "filename": filename
+                }
             
             # 2. Del opp i chunks
             chunks = self.chunk_text(text)
             
             if not chunks:
-                raise Exception("Kunne ikke lage chunks fra tekst")
+                logger.warning(f"⚠️ Kunne ikke lage chunks fra: {filename}")
+                return {
+                    "status": "error",
+                    "message": "Kunne ikke prosessere dokumentteksten",
+                    "filename": filename
+                }
             
             # 3. Lag embeddings
             chunk_texts = [chunk["text"] for chunk in chunks]
-            embeddings = await self.create_embeddings(chunk_texts)
+            try:
+                embeddings = await self.create_embeddings(chunk_texts)
+            except Exception as e:
+                logger.error(f"❌ Embedding feilet: {e}")
+                # Fallback til enkel tekstlagring
+                return self._store_simple_text(filename, chunks)
             
-            # 4. Lagre i ChromaDB
+            # 4. Lagre i ChromaDB eller in-memory
             doc_id = str(uuid.uuid4())
-            chunk_ids = []
-            metadatas = []
-            documents = []
             
-            for i, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-                chunk_id = f"{doc_id}_chunk_{i}"
-                chunk_ids.append(chunk_id)
-                
-                metadata = {
-                    "filename": filename,
-                    "doc_id": doc_id,
-                    "chunk_index": i,
-                    "tokens": chunk["tokens"],
-                    "text_length": len(chunk["text"])
-                }
-                metadatas.append(metadata)
-                documents.append(chunk["text"])
-            
-            # Lagre i ChromaDB hvis tilgjengelig, ellers in-memory
-            if self.collection is not None:
-                self.collection.add(
-                    ids=chunk_ids,
-                    embeddings=embeddings,
-                    metadatas=metadatas,
-                    documents=documents
-                )
-                logger.info(f"✅ Dokument lagret i ChromaDB: {filename}")
+            if self.initialized and self.collection is not None:
+                try:
+                    self._store_in_chromadb(doc_id, filename, chunks, embeddings)
+                    logger.info(f"✅ Dokument lagret i ChromaDB: {filename}")
+                except Exception as e:
+                    logger.error(f"❌ ChromaDB lagring feilet: {e}")
+                    return self._store_simple_text(filename, chunks)
             else:
-                # Fallback: Store in memory
-                for i, (chunk_id, embedding, metadata, document) in enumerate(zip(chunk_ids, embeddings, metadatas, documents)):
-                    self.in_memory_docs.append({
-                        "id": chunk_id,
-                        "embedding": embedding,
-                        "metadata": metadata,
-                        "document": document
-                    })
-                logger.info(f"✅ Dokument lagret in-memory: {filename} ({len(chunk_ids)} chunks)")
-            
-            logger.info(f"✅ Dokument prosessert: {filename} → {len(chunks)} chunks lagret")
+                return self._store_simple_text(filename, chunks)
             
             return {
+                "status": "success",
                 "doc_id": doc_id,
                 "filename": filename,
                 "chunks_count": len(chunks),
@@ -242,7 +189,55 @@ class GPSRAGService:
             
         except Exception as e:
             logger.error(f"❌ Dokument prosessering feilet: {e}")
-            raise
+            return {
+                "status": "error",
+                "message": str(e),
+                "filename": filename
+            }
+
+    def _store_simple_text(self, filename: str, chunks: List[Dict]) -> Dict:
+        """Fallback metode for enkel tekstlagring"""
+        doc_id = str(uuid.uuid4())
+        for i, chunk in enumerate(chunks):
+            self.in_memory_docs.append({
+                "id": f"{doc_id}_chunk_{i}",
+                "text": chunk["text"],
+                "metadata": {
+                    "filename": filename,
+                    "doc_id": doc_id,
+                    "chunk_index": i
+                }
+            })
+        logger.info(f"✅ Dokument lagret in-memory: {filename}")
+        return {
+            "status": "success",
+            "doc_id": doc_id,
+            "filename": filename,
+            "chunks_count": len(chunks),
+            "storage_type": "in_memory"
+        }
+
+    def _store_in_chromadb(self, doc_id: str, filename: str, chunks: List[Dict], embeddings: List[List[float]]):
+        """Lagrer dokumentet i ChromaDB"""
+        chunk_ids = []
+        metadatas = []
+        documents = []
+        
+        for i, chunk in enumerate(chunks):
+            chunk_ids.append(f"{doc_id}_chunk_{i}")
+            metadatas.append({
+                "filename": filename,
+                "doc_id": doc_id,
+                "chunk_index": i
+            })
+            documents.append(chunk["text"])
+        
+        self.collection.add(
+            ids=chunk_ids,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            documents=documents
+        )
 
     async def search_documents(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
         """Søker i dokumenter med RAG (ChromaDB eller in-memory fallback)"""

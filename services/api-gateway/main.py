@@ -3,6 +3,9 @@ GPSRAG API Gateway - Railway Deployment
 Hovedapplikasjon som håndterer alle API-kall og serverer frontend
 """
 
+# CRITICAL: Apply NumPy compatibility BEFORE any other imports
+import numpy_compat
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
@@ -124,7 +127,7 @@ except Exception as e:
 # Try to import and mount chat router safely
 try:
     from src.routers import chat
-    app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+    app.include_router(chat.router, prefix="/api", tags=["chat"])
     logger.info("✅ Chat router loaded")
 except ImportError as e:
     logger.warning(f"⚠️ Chat router ikke tilgjengelig: {e}")
@@ -145,56 +148,6 @@ async def api_root():
             "upload": "/api/upload",
         }
     }
-
-# Chat endpoint with RAG integration
-@app.post("/api/chat/")
-async def chat_endpoint(request: dict):
-    """Chat endpoint med full RAG integrasjon"""
-    try:
-        # Import RAG service
-        from rag_service import get_rag_service
-        rag_service = get_rag_service()
-        
-        message = request.get("message", "")
-        session_id = request.get("session_id", "default")
-        
-        if not message:
-            raise HTTPException(status_code=400, detail="Melding er påkrevet")
-        
-        logger.info(f"🚀 RAG Chat query: {message}")
-        
-        # 🎯 FULL RAG PIPELINE AKTIVERT!
-        try:
-            rag_result = await rag_service.generate_rag_response(message)
-            
-            return {
-                "response": rag_result["response"],
-                "session_id": session_id,
-                "status": "success",
-                "sources": rag_result["sources"],
-                "context_used": rag_result["context_used"],
-                "search_results_count": rag_result.get("search_results_count", 0)
-            }
-            
-        except Exception as rag_error:
-            logger.error(f"❌ RAG chat feil: {rag_error}")
-            
-            # RAG chat feilet - returnér detaljert feil
-            # Fallback til enkel respons
-            fallback_response = f"Beklager, RAG-systemet er midlertidig utilgjengelig. Feil: {str(rag_error)[:100]}..."
-            
-            return {
-                "response": fallback_response,
-                "session_id": session_id,
-                "status": "fallback",
-                "sources": [],
-                "context_used": False,
-                "error": str(rag_error)
-            }
-            
-    except Exception as e:
-        logger.error(f"Chat error: {e}")
-        raise HTTPException(status_code=500, detail=f"Chat feil: {str(e)}")
 
 # File upload endpoint with RAG processing
 @app.post("/api/upload")
@@ -230,41 +183,44 @@ async def upload_file(file: UploadFile = File(...)):
         
         logger.info(f"✅ Fil lagret: {file.filename} ({file_size} bytes)")
         
-        # 🚀 RAG PROSESSERING AKTIVERT! (Med robust fallback og direkte implementasjon)
+        # Prosesser dokumentet med RAG
         try:
-            rag_result = await rag_service.process_document(str(file_path), file.filename)
+            result = await rag_service.process_document(str(file_path), file.filename)
             
-            logger.info(f"🎉 RAG prosessering fullført: {rag_result}")
-            
-            return {
-                "status": "success",
-                "message": f"Fil '{file.filename}' lastet opp og prosessert med RAG",
-                "filename": file.filename,
-                "size": file_size,
-                "processed": True,
-                "rag_processing": {
-                    "doc_id": rag_result["doc_id"],
-                    "chunks_count": rag_result["chunks_count"],
-                    "total_tokens": rag_result["total_tokens"],
-                    "text_length": rag_result["text_length"]
+            if result["status"] == "success":
+                logger.info(f"✅ RAG prosessering fullført: {result}")
+                return {
+                    "status": "success",
+                    "message": f"Fil '{file.filename}' lastet opp og prosessert",
+                    "filename": file.filename,
+                    "size": file_size,
+                    "processed": True,
+                    "rag_info": {
+                        "doc_id": result["doc_id"],
+                        "chunks_count": result["chunks_count"],
+                        "storage_type": result.get("storage_type", "chromadb")
+                    }
                 }
-            }
+            else:
+                logger.warning(f"⚠️ RAG prosessering feilet: {result}")
+                return {
+                    "status": "success",
+                    "message": f"Fil '{file.filename}' lastet opp (RAG prosessering feilet: {result['message']})",
+                    "filename": file.filename,
+                    "size": file_size,
+                    "processed": False,
+                    "error": result["message"]
+                }
             
         except Exception as rag_error:
             logger.error(f"❌ RAG prosessering feilet: {rag_error}")
-            import traceback
-            detailed_error = traceback.format_exc()
-            logger.error(f"📊 Detaljert RAG feil: {detailed_error}")
-            
-            # RAG prosessering feilet - returner detaljert feil for debugging
             return {
                 "status": "success",
                 "message": f"Fil '{file.filename}' lastet opp (RAG prosessering under feilsøking)",
                 "filename": file.filename,
                 "size": file_size,
                 "processed": False,
-                "rag_error": str(rag_error)[:200] + "..." if len(str(rag_error)) > 200 else str(rag_error),
-                "note": "Upload vellykket - RAG funksjonalitet kommer snart!"
+                "error": str(rag_error)
             }
         
     except HTTPException:
@@ -272,16 +228,6 @@ async def upload_file(file: UploadFile = File(...)):
     except Exception as e:
         logger.error(f"Upload error: {e}")
         raise HTTPException(status_code=500, detail=f"Upload feil: {str(e)}")
-
-# Fallback chat endpoint for testing (backup)
-@app.post("/api/chat")
-async def chat_fallback():
-    """Fallback chat endpoint for Railway testing"""
-    return {
-        "response": "Hei! Dette er en test-respons fra GPSRAG på Railway. Full chat-funksjonalitet kommer snart!",
-        "status": "Railway deployment aktiv",
-        "timestamp": "2025-06-10"
-    }
 
 # Root route - serve Next.js frontend
 @app.get("/")

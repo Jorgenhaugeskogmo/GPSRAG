@@ -141,103 +141,76 @@ async def send_chat_message(
     chat_request: ChatRequest,
     db: Session = Depends(get_db)
 ):
-    """Send en melding og få RAG-basert svar"""
+    """Send en chat-melding og få svar med RAG"""
     try:
-        # Verifiser at session eksisterer
-        session = db.query(ChatSession).filter(ChatSession.id == session_id).first()
-        if not session:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Chat-session ikke funnet"
-            )
+        # Import RAG service
+        from rag_service import get_rag_service
+        rag_service = get_rag_service()
         
         # Lagre bruker-melding
         user_message = ChatMessage(
             session_id=session_id,
             role="user",
-            content=chat_request.message,
-            metadata=chat_request.metadata
+            content=chat_request.message
         )
         db.add(user_message)
         db.commit()
         
-        # Kall RAG-engine for å få svar
-        try:
-            async with httpx.AsyncClient() as client:
-                rag_response = await client.post(
-                    f"{settings.rag_engine_url}/query",
-                    json={
-                        "query": chat_request.message,
-                        "session_id": str(session_id),
-                        "include_gps": chat_request.include_gps_data,
-                        "metadata": chat_request.metadata
-                    },
-                    timeout=30.0
-                )
-                rag_response.raise_for_status()
-                rag_data = rag_response.json()
-        except Exception as e:
-            logger.error(f"Feil ved kall til RAG-engine: {e}")
-            # Fallback-svar hvis RAG-engine ikke er tilgjengelig
-            rag_data = {
-                "response": "Beklager, jeg kan ikke svare på det akkurat nå. Prøv igjen senere.",
+        # Søk etter relevante dokumenter
+        relevant_docs = await rag_service.search_documents(
+            query=chat_request.message,
+            top_k=3
+        )
+        
+        if not relevant_docs:
+            # Ingen relevante dokumenter funnet
+            response = {
+                "response": "Beklager, jeg fant ingen relevante dokumenter for spørsmålet ditt. Last opp noen PDF-er først!",
                 "sources": [],
-                "confidence": 0.0
+                "context_used": False
             }
+        else:
+            # Generer svar med RAG
+            try:
+                response = await rag_service.generate_rag_response(
+                    query=chat_request.message,
+                    relevant_docs=relevant_docs
+                )
+            except Exception as e:
+                logger.error(f"❌ RAG respons generering feilet: {e}")
+                # Fallback til enkel respons
+                response = {
+                    "response": "Beklager, jeg kunne ikke generere et svar basert på dokumentene akkurat nå. Prøv igjen senere!",
+                    "sources": [],
+                    "context_used": False,
+                    "error": str(e)
+                }
         
         # Lagre assistant-melding
         assistant_message = ChatMessage(
             session_id=session_id,
             role="assistant",
-            content=rag_data["response"],
+            content=response["response"],
             metadata={
-                "sources": rag_data.get("sources", []),
-                "confidence": rag_data.get("confidence", 0.0),
-                "processing_time": rag_data.get("processing_time", 0.0)
+                "sources": response.get("sources", []),
+                "context_used": response.get("context_used", False),
+                "error": response.get("error", None)
             }
         )
         db.add(assistant_message)
         db.commit()
         
-        # Konverter kilder til riktig format
-        formatted_sources = []
-        if isinstance(rag_data.get("sources", []), list):
-            for source in rag_data.get("sources", []):
-                try:
-                    # Handle both dict and object formats
-                    if isinstance(source, dict):
-                        formatted_sources.append(DocumentSource(
-                            filename=source.get("filename", "Ukjent dokument"),
-                            page=source.get("page"),
-                            relevance_score=source.get("score", 0.0),  # RAG engine uses "score"
-                            excerpt=source.get("excerpt", "")
-                        ))
-                    else:
-                        # If it's already a source object, extract the data
-                        formatted_sources.append(DocumentSource(
-                            filename=getattr(source, "filename", "Ukjent dokument"),
-                            page=getattr(source, "page", None),
-                            relevance_score=getattr(source, "score", 0.0),
-                            excerpt=getattr(source, "excerpt", "")
-                        ))
-                except Exception as e:
-                    logger.error(f"Error formatting source: {e}, source: {source}")
-                    continue
-        
         return ChatResponse(
-            response=rag_data["response"],
-            session_id=str(session_id),
-            sources=formatted_sources,
-            metadata=rag_data.get("metadata", {})
+            message=response["response"],
+            sources=response.get("sources", []),
+            context_used=response.get("context_used", False)
         )
         
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Feil ved behandling av chat-melding: {e}")
+        logger.error(f"❌ Chat error: {e}")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Kunne ikke behandle meldingen"
+            status_code=500,
+            detail="Det oppstod en feil under chat-prosessering"
         )
 
 @router.delete("/sessions/{session_id}")
