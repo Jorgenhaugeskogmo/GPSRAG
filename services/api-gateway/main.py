@@ -16,6 +16,7 @@ import os
 import tempfile
 import shutil
 from pathlib import Path
+from pydantic import BaseModel
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -125,12 +126,17 @@ except Exception as e:
     logger.warning(f"⚠️ Static files mounting feilet: {e}")
 
 # Try to import and mount chat router safely
-try:
-    from src.routers import chat
-    app.include_router(chat.router, prefix="/api", tags=["chat"])
-    logger.info("✅ Chat router loaded")
-except ImportError as e:
-    logger.warning(f"⚠️ Chat router ikke tilgjengelig: {e}")
+# try:
+#     from src.routers import chat
+#     app.include_router(chat.router, prefix="/api", tags=["chat"]) # Using the router from src
+#     logger.info("✅ Chat router loaded")
+# except ImportError as e:
+#     logger.warning(f"⚠️ Chat router ikke tilgjengelig: {e}")
+
+# Model for the chat request body
+class ChatRequest(BaseModel):
+    message: str
+    session_id: str = "default-session"
 
 @app.get("/api")
 async def api_root():
@@ -148,6 +154,36 @@ async def api_root():
             "upload": "/api/upload",
         }
     }
+
+# Chat endpoint with RAG integration - MOVED HERE FOR SIMPLICITY
+@app.post("/api/chat/")
+async def chat_endpoint(chat_request: ChatRequest):
+    """Chat endpoint med full RAG integrasjon, nå direkte i main.py"""
+    try:
+        from rag_service import get_rag_service
+        rag_service = get_rag_service()
+        
+        logger.info(f"🚀 RAG Chat query mottatt: {chat_request.message}")
+        
+        # Kall RAG-tjenesten for å generere et svar
+        rag_result = await rag_service.generate_rag_response(chat_request.message)
+        
+        # Returner svaret i forventet format
+        return {
+            "response": rag_result["response"],
+            "session_id": chat_request.session_id,
+            "status": "success",
+            "sources": rag_result.get("sources", []),
+            "context_used": rag_result.get("context_used", False)
+        }
+            
+    except Exception as e:
+        logger.error(f"❌ Chat endpoint feilet: {e}", exc_info=True)
+        # Returner en mer detaljert feilmelding til klienten
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Det oppstod en intern feil i chat-tjenesten: {str(e)}"
+        )
 
 # File upload endpoint with RAG processing
 @app.post("/api/upload")
